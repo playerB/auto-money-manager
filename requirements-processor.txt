@@ -1,0 +1,4 @@
+# Dependencies for the GitHub Actions processing job only (kept minimal/fast).
+supabase>=2.4
+python-dotenv>=1.0
+tzdata>=2024.1

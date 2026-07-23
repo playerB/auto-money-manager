@@ -1,0 +1,8 @@
+# Full dev + dashboard dependencies.
+# (The CI processor uses the lighter requirements-processor.txt.)
+supabase>=2.4
+python-dotenv>=1.0
+tzdata>=2024.1
+streamlit>=1.35
+pandas>=2.2
+pytest>=8.0
