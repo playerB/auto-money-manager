@@ -46,12 +46,33 @@ def check_password() -> bool:
     return False
 
 
+def _resolve_key() -> tuple[str, str]:
+    """Find the Supabase key under any of the common secret names."""
+    for name in (
+        "SUPABASE_SERVICE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_KEY",
+        "SUPABASE_ANON_KEY",
+    ):
+        val = _get(name)
+        if val:
+            return val, name
+    return "", ""
+
+
 @st.cache_resource
 def get_client():
-    # Service key: server-side only on Community Cloud. Falls back to anon key
-    # for local dev if that's all that's set.
-    key = _get("SUPABASE_SERVICE_KEY") or _get("SUPABASE_ANON_KEY")
-    return create_client(_get("SUPABASE_URL"), key)
+    url = _get("SUPABASE_URL")
+    key, _name = _resolve_key()
+    if not url or not key:
+        st.error(
+            "Supabase secrets missing. In the app's Settings → Secrets, add:\n\n"
+            '`SUPABASE_URL = \"https://xxxx.supabase.co\"`\n\n'
+            '`SUPABASE_SERVICE_KEY = \"your-service_role-key\"`\n\n'
+            "then Save and **Reboot app** (secrets only load on reboot)."
+        )
+        st.stop()
+    return create_client(url, key)
 
 
 @st.cache_data(ttl=60)
@@ -60,7 +81,11 @@ def load_transactions() -> pd.DataFrame:
     resp = sb.table("transactions").select("*").order("ts", desc=True).limit(2000).execute()
     df = pd.DataFrame(resp.data or [])
     if not df.empty:
-        df["ts"] = pd.to_datetime(df["ts"]).dt.tz_convert("Asia/Bangkok")
+        # Timestamps are ISO8601 but vary (some with microseconds, some without),
+        # so parse with format="ISO8601" and normalize to Bangkok time.
+        df["ts"] = pd.to_datetime(
+            df["ts"], format="ISO8601", utc=True
+        ).dt.tz_convert("Asia/Bangkok")
     return df
 
 
