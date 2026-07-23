@@ -66,6 +66,28 @@ _DATETIME_RE = re.compile(
 )
 
 
+# --- Album registry ---------------------------------------------------------
+# A slip event's source is "gallery-<album>"; one album = one bank = one slip
+# style. Map the album to a bank hint and (later) a style-specific parser.
+ALBUM_BANK = {
+    "kplus": "KBANK",
+}
+
+
+def bank_for_album(album: Optional[str]) -> Optional[str]:
+    return ALBUM_BANK.get((album or "").lower())
+
+
+def parser_for_album(album: Optional[str]):
+    """Return the parse function for an album's slip style.
+
+    Today every album uses the generic `parse_slip` (it reads the banks from the
+    slip content). When a bank's slip layout diverges, register a dedicated
+    parser here keyed by album.
+    """
+    return parse_slip
+
+
 def ocr_image(image_bytes: bytes) -> str:
     """OCR an image (Thai+English). Imported lazily so tests don't need it."""
     import io

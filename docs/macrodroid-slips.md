@@ -4,7 +4,9 @@ Goal: when a bank app saves a slip image into its folder (e.g. `K PLUS` for
 KBANK), MacroDroid uploads that image to Supabase Storage and inserts a
 `raw_events` row. The processor then OCRs it and records the transfer.
 
-Build one macro per slip folder so the bank is known from the folder.
+Build one macro per slip folder. The event `source` is `gallery-<album>` (one
+album = one bank = one slip style), e.g. `gallery-kplus` for KBANK's K PLUS
+folder. The processor picks the slip parser and bank from the album.
 
 ## One-time setup (Supabase)
 
@@ -45,11 +47,14 @@ Run `db/migrations/003_slips_storage.sql` in the SQL editor. It creates a privat
   Content-Type: application/json
   Prefer: return=minimal
   ```
-- Body (set `bank` to this folder's bank; `path` = the same file name you
-  uploaded to):
+- Body — `source` is `gallery-<album>` for this folder (e.g. `gallery-kplus`);
+  `path` = the same file name you uploaded to. The bank is derived from the
+  album, so no `bank` field is needed:
   ```json
-  {"source":"slip","payload":{"path":"{file_name}","bank":"KBANK"}}
+  {"source":"gallery-kplus","payload":{"path":"{file_name}"}}
   ```
+  To add another bank later, use a new album name (e.g. `gallery-scbeasy`) and
+  register it in `src/slips.py` `ALBUM_BANK`.
 
 **Constraint (recommended):** only fire for image files — add a constraint that
 the file name ends with `.jpg`/`.png`, so non-image files in the folder are

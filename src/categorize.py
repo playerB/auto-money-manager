@@ -10,8 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from supabase import Client
-
 
 def load_rules(sb: Client) -> list[dict[str, Any]]:
     resp = (

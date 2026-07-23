@@ -4,12 +4,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from supabase import Client, create_client
-
 from . import config
 
+# `supabase` is imported lazily inside get_client so this module (and callers
+# like process.py) import cleanly without the package present — e.g. for unit
+# tests that exercise routing/parsing but never touch the database.
 
-def get_client() -> Client:
+
+def get_client():
+    from supabase import create_client
+
     config.require_supabase()
     return create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
 
@@ -83,6 +87,10 @@ def find_near_duplicate(
 def insert_transaction(sb: Client, row: dict[str, Any]) -> dict[str, Any]:
     resp = sb.table("transactions").insert(row).execute()
     return (resp.data or [{}])[0]
+
+
+def update_transaction(sb: Client, txn_id: int, fields: dict[str, Any]) -> None:
+    sb.table("transactions").update(fields).eq("id", txn_id).execute()
 
 
 def download_slip(sb: Client, bucket: str, path: str) -> bytes:
