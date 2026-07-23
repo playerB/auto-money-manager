@@ -58,7 +58,7 @@ create table if not exists counterparty_rules (
 -- ---------------------------------------------------------------------------
 create table if not exists raw_events (
     id           bigserial primary key,
-    source       text not null check (source in ('line', 'onedrive', 'pdf', 'manual')),
+    source       text not null,              -- e.g. line | slip | pdf | manual | ... (unconstrained)
     payload      jsonb not null,             -- {title, text, timestamp, ...}
     received_at  timestamptz not null default now(),
     processed    boolean not null default false,
@@ -85,7 +85,7 @@ create table if not exists transactions (
     counterparty_name text,
     category_id     bigint references categories(id) on delete set null,
     subcategory_id  bigint references subcategories(id) on delete set null,
-    source          text not null check (source in ('line', 'onedrive', 'pdf', 'manual')),
+    source          text not null,                -- e.g. line | slip | pdf | manual | ... (unconstrained)
     raw_event_id    bigint references raw_events(id) on delete set null,
     dedup_key       text unique,
     is_internal     boolean not null default false, -- own-to-own transfer / card payment
