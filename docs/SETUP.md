@@ -53,16 +53,20 @@ after the next processor run (or a manual run).
 
 ## 4. Dashboard
 
-1. Push the repo to GitHub (done above).
-2. Go to share.streamlit.io, connect the repo, set the main file to
+1. First, lock down table access: run `db/migrations/002_lock_rls.sql` in the
+   Supabase SQL editor. After this the phone's anon key can only insert
+   raw_events; it cannot read your transactions.
+2. Push the repo to GitHub (done above).
+3. Go to share.streamlit.io, connect the repo, set the main file to
    `dashboard/app.py`.
-3. In the app's **Settings → Secrets**, add:
+4. In the app's **Settings → Secrets**, add (note: the **service** key — it stays
+   server-side on Community Cloud and is never sent to the browser):
    ```toml
    SUPABASE_URL = "https://xxxx.supabase.co"
-   SUPABASE_ANON_KEY = "your-anon-key"
+   SUPABASE_SERVICE_KEY = "your-service_role-key"
    APP_PASSWORD = "choose-a-password"
    ```
-4. Open the app URL, enter the password, and you should see your transactions.
+5. Open the app URL, enter the password, and you should see your transactions.
 
 ## 5. Tune the parsers
 
