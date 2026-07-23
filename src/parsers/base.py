@@ -80,7 +80,12 @@ class ParsedTxn:
     review_reasons: list[str] = field(default_factory=list)
 
     def flag(self, reason: str) -> None:
+        """Material uncertainty (missing amount/direction) -> needs review."""
         self.needs_review = True
+        self.review_reasons.append(reason)
+
+    def note(self, reason: str) -> None:
+        """Informational note (e.g. timestamp fallback) -> recorded, not flagged."""
         self.review_reasons.append(reason)
 
 

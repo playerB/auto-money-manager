@@ -75,6 +75,6 @@ def parse(title: str, text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
     if _direction(title, text) is None:
         txn.flag("KBANK: direction defaulted to debit")
     if not ts_ok:
-        txn.flag("KBANK: timestamp fell back to arrival time")
+        txn.note("KBANK: timestamp fell back to arrival time")
 
     return txn

@@ -30,9 +30,17 @@ _BALANCE_RE = re.compile(r"ยอดเงินที่ใช้ได้.*$")
 
 
 def _direction(text: str) -> Optional[str]:
+    # money in
     if "เงินเข้า" in text or "รับ" in text:
         return "credit"
-    if "โอน" in text or "ถอน" in text or "ชำระ" in text or "ใช้จ่าย" in text:
+    # money out: "รายการเงินออก", transfers, withdrawals, payments
+    if (
+        "เงินออก" in text
+        or "โอน" in text
+        or "ถอน" in text
+        or "ชำระ" in text
+        or "จ่าย" in text
+    ):
         return "debit"
     return None
 
@@ -79,6 +87,6 @@ def parse(title: str, text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
     if _direction(norm) is None:
         txn.flag("SCB: direction defaulted to debit")
     if not ts_ok:
-        txn.flag("SCB: timestamp fell back to arrival time (message truncated?)")
+        txn.note("SCB: timestamp fell back to arrival time (message truncated?)")
 
     return txn

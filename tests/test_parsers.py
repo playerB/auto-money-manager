@@ -52,12 +52,23 @@ def test_scb_incoming_ignores_balance():
     assert not t.needs_review
 
 
+def test_scb_outgoing():
+    # Real outgoing payload (LINE truncated the date to "24/0").
+    t = d("SCB", "SCB Connect", "รายการเงินออก 4.00 บาท จากบัญชี X-6442 วันที่ 24/0")
+    assert t.bank == "SCB"
+    assert t.direction == "debit"
+    assert t.amount == 4.00
+    assert t.account_masked == "6442"
+    assert t.ts == FB  # truncated date -> arrival time
+    assert not t.needs_review  # direction + amount known; ts fallback is only a note
+
+
 def test_scb_truncated_falls_back():
     t = d("SCB", "SCB Connect", "รายการเงินเข้า 5.00 บาท เข้าบัญชี X-6442 วันที่ 24")
     assert t.amount == 5.00
     assert t.account_masked == "6442"
     assert t.ts == FB  # truncated date -> arrival time
-    assert t.needs_review  # flagged that the timestamp was a fallback
+    assert not t.needs_review  # ts fallback is a note, not a review flag
 
 
 # --- UOB card (via LINE) -----------------------------------------------------
