@@ -1,13 +1,11 @@
-"""KBANK (Kasikornbank) LINE notification parser.
+"""KBANK parser — notifications come straight from the KBANK app (reliable).
 
-TODO: tune the patterns below against 2-3 real (redacted) KBANK LINE alerts.
-The detection keywords and field extraction are best-effort defaults.
+Samples (redacted):
+    title: "รายการเงินเข้า"      text: "บัญชี xxx-x-x3341-x  จำนวนเงิน 2.00 บาท  วันที่ 23 ก.ค. 69  23:49 น."
+    title: "รายการโอน/ถอน"       text: "บัญชี xxx-x-x3341-x  จำนวนเงิน 3.00 บาท  วันที่ 23 ก.ค. 69  23:55 น."
 
-Example shapes this currently handles (illustrative, redacted):
-    title: "KBANK"
-    text:  "โอนเงิน 1,500.00 บาท จากบัญชี x1234 ไปยัง นายสมชาย ใจดี"
-    text:  "รับโอน 2,000.00 บาท เข้าบัญชี x1234 จาก บจก. เอบีซี"
-    text:  "ชำระค่าสินค้า 350.00 บาท ร้าน 7-ELEVEN บัญชี x1234"
+KBANK app alerts carry account + amount + date/time, but no counterparty name.
+Direction comes from the title.
 """
 from __future__ import annotations
 
@@ -18,56 +16,65 @@ from typing import Optional
 from . import base
 from .base import ParsedTxn
 
-# Detect a KBANK message from title or body.
-_KBANK_HINT = re.compile(r"KBANK|กสิกร|K\s?PLUS|K\+", re.IGNORECASE)
-
-# Try to pull a counterparty after common connectors.
-#   "ไปยัง <name>" / "จาก <name>" / "ร้าน <name>" / "to <name>"
-_COUNTERPARTY_RE = re.compile(
-    r"(?:ไปยัง|ไปที่|จาก|ร้าน|ให้แก่|ให้กับ|to|ที่)\s*[:：]?\s*(.+?)"
-    r"(?:\s+(?:บัญชี|เลขที่|ref|อ้างอิง|เวลา)|[。.\n]|$)",
-    re.IGNORECASE,
-)
+_AMOUNT_RE = re.compile(r"จำนวนเงิน\s*([\d,]+\.\d{2})")
+_ACCOUNT_RE = re.compile(r"บัญชี\s*([xX0-9\-]+)")
+# "วันที่ 23 ก.ค. 69" then "23:49 น."
+_DATE_RE = re.compile(r"วันที่\s*(\d{1,2})\s*([ก-๙]+\.[ก-๙]+\.)\s*(\d{2})")
+_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*น\.")
 
 
-@base.register
-def parse(title: str, text: str, ts_hint: datetime) -> Optional[ParsedTxn]:
-    blob = f"{title}\n{text}"
-    if not _KBANK_HINT.search(blob):
-        return None
+def _direction(title: str, text: str) -> Optional[str]:
+    blob = f"{title} {text}"
+    if "เงินเข้า" in blob:
+        return "credit"
+    if "โอน" in blob or "ถอน" in blob or "ชำระ" in blob:
+        return "debit"
+    return None
 
-    amount = base.parse_amount(text)
-    if amount is None:
-        # Recognized as KBANK but couldn't read an amount — surface for review.
-        txn = ParsedTxn(
-            amount=0.0,
-            direction="debit",
-            method="bank",
-            bank="KBANK",
-            ts=base.ensure_tz(ts_hint),
-        )
-        txn.flag("KBANK message but no amount parsed")
-        return txn
 
-    direction = base.guess_direction(blob) or "debit"
+def _timestamp(text: str, fallback: datetime) -> tuple[datetime, bool]:
+    text = base.thai_to_arabic(text)
+    dm = _DATE_RE.search(text)
+    tm = _TIME_RE.search(text)
+    if dm and dm.group(2) in base.THAI_MONTHS:
+        day = int(dm.group(1))
+        month = base.THAI_MONTHS[dm.group(2)]
+        year = base.be2_to_ce(int(dm.group(3)))
+        hour = int(tm.group(1)) if tm else 0
+        minute = int(tm.group(2)) if tm else 0
+        try:
+            return base.build_local_dt(year, month, day, hour, minute), True
+        except ValueError:
+            pass
+    return base.ensure_tz(fallback), False
+
+
+@base.register("KBANK")
+def parse(title: str, text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
+    ts, ts_ok = _timestamp(text, fallback_ts)
     txn = ParsedTxn(
-        amount=amount,
-        direction=direction,
+        amount=0.0,
+        direction=_direction(title, text) or "debit",
         method="bank",
         bank="KBANK",
-        ts=base.ensure_tz(ts_hint),
-        account_masked=base.parse_last4(text),
+        ts=ts,
     )
 
-    m = _COUNTERPARTY_RE.search(text)
-    if m:
-        name = m.group(1).strip(" .:-")
-        if name:
-            txn.counterparty_name = name
+    am = _AMOUNT_RE.search(base.thai_to_arabic(text))
+    if am:
+        txn.amount = float(am.group(1).replace(",", ""))
     else:
-        txn.flag("no counterparty parsed")
+        txn.flag("KBANK: no amount parsed")
 
-    if base.guess_direction(blob) is None:
-        txn.flag("direction guessed (defaulted to debit)")
+    acc = _ACCOUNT_RE.search(text)
+    if acc:
+        digits = re.sub(r"\D", "", base.thai_to_arabic(acc.group(1)))
+        if len(digits) >= 4:
+            txn.account_masked = digits[-4:]
+
+    if _direction(title, text) is None:
+        txn.flag("KBANK: direction defaulted to debit")
+    if not ts_ok:
+        txn.flag("KBANK: timestamp fell back to arrival time")
 
     return txn

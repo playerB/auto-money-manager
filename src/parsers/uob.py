@@ -1,12 +1,11 @@
-"""UOB (Thailand) credit-card LINE notification parser.
+"""UOB credit-card parser — notifications arrive via LINE (sender 'UOB Thai').
 
-TODO: tune against 2-3 real (redacted) UOB card alerts.
+Sample (redacted):
+    text: "มีการใช้บัตร UOB-8340 @TMN 7-11 1.00 THB วันที่ 23"
 
-Example shapes this currently handles (illustrative, redacted):
-    title: "UOB"
-    text:  "การใช้จ่ายผ่านบัตร UOB xxxx1234 จำนวน 850.00 บาท ที่ GRAB"
-    text:  "UOB Card xxxx1234 spent THB 1,299.00 at LAZADA"
-    text:  "ชำระยอดบัตรเครดิต 5,000.00 บาท"   -> internal (card payment)
+Shape: "มีการใช้บัตร UOB-<last4> @<merchant> <amount> THB วันที่ <dd>".
+LINE truncates the date to the day, so we fall back to arrival time.
+Card usage is always a debit against the credit card.
 """
 from __future__ import annotations
 
@@ -17,56 +16,45 @@ from typing import Optional
 from . import base
 from .base import ParsedTxn
 
-_UOB_HINT = re.compile(r"UOB|ยูโอบี", re.IGNORECASE)
-
-# Merchant after "ที่ <merchant>" / "at <merchant>".
-_MERCHANT_RE = re.compile(
-    r"(?:ที่|at|ร้าน)\s*[:：]?\s*(.+?)(?:\s+(?:เวลา|ref|อ้างอิง|วันที่)|[。.\n]|$)",
-    re.IGNORECASE,
-)
-
-# Card-payment (paying off the card) => internal transfer, not spending.
-_CARD_PAYMENT_HINT = re.compile(r"ชำระยอดบัตร|ชำระค่าบัตร|card\s+payment", re.IGNORECASE)
+_CARD_RE = re.compile(r"UOB-?(\d{4})", re.IGNORECASE)
+_AMOUNT_RE = re.compile(r"([\d,]+\.\d{2})\s*THB", re.IGNORECASE)
+# merchant sits between "@" and the amount
+_MERCHANT_RE = re.compile(r"@\s*(.+?)\s+[\d,]+\.\d{2}\s*THB", re.IGNORECASE)
+# paying the card off (internal movement, not spending)
+_CARD_PAYMENT_RE = re.compile(r"ชำระยอดบัตร|ชำระค่าบัตร|card\s*payment", re.IGNORECASE)
 
 
-@base.register
-def parse(title: str, text: str, ts_hint: datetime) -> Optional[ParsedTxn]:
-    blob = f"{title}\n{text}"
-    if not _UOB_HINT.search(blob):
-        return None
+@base.register("UOB")
+def parse(title: str, text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
+    norm = base.thai_to_arabic(text)
+    is_payment = bool(_CARD_PAYMENT_RE.search(norm))
 
-    amount = base.parse_amount(text)
-    if amount is None:
-        txn = ParsedTxn(
-            amount=0.0,
-            direction="debit",
-            method="credit_card",
-            bank="UOB",
-            ts=base.ensure_tz(ts_hint),
-        )
-        txn.flag("UOB message but no amount parsed")
-        return txn
-
-    is_payment = bool(_CARD_PAYMENT_HINT.search(blob))
     txn = ParsedTxn(
-        amount=amount,
-        direction="debit",  # a card charge reduces available credit
+        amount=0.0,
+        direction="debit",
         method="credit_card",
         bank="UOB",
-        ts=base.ensure_tz(ts_hint),
-        account_masked=base.parse_last4(text),
-        is_internal=is_payment,  # paying the card off is an internal movement
+        ts=base.ensure_tz(fallback_ts),  # date is truncated to day -> use arrival
+        is_internal=is_payment,
     )
+
+    am = _AMOUNT_RE.search(norm)
+    if am:
+        txn.amount = float(am.group(1).replace(",", ""))
+    else:
+        txn.flag("UOB: no amount parsed")
+
+    card = _CARD_RE.search(norm)
+    if card:
+        txn.account_masked = card.group(1)
 
     if is_payment:
         txn.counterparty_name = "UOB card payment"
     else:
-        m = _MERCHANT_RE.search(text)
-        if m:
-            merchant = m.group(1).strip(" .:-")
-            if merchant:
-                txn.counterparty_name = merchant
+        mer = _MERCHANT_RE.search(norm)
+        if mer:
+            txn.counterparty_name = mer.group(1).strip(" .:-")
         else:
-            txn.flag("no merchant parsed")
+            txn.flag("UOB: no merchant parsed")
 
     return txn

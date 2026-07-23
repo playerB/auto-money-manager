@@ -79,7 +79,9 @@ create table if not exists transactions (
     amount          numeric(14, 2) not null,
     direction       text not null check (direction in ('debit', 'credit')),
     method          text not null check (method in ('bank', 'credit_card', 'cash')),
+    bank            text,                         -- 'KBANK' | 'SCB' | 'UOB' | ...
     account_id      bigint references accounts(id) on delete set null,
+    account_masked  text,                         -- last 4 digits from the alert
     counterparty_name text,
     category_id     bigint references categories(id) on delete set null,
     subcategory_id  bigint references subcategories(id) on delete set null,

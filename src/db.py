@@ -48,12 +48,21 @@ def transaction_exists(sb: Client, dedup_key: str) -> bool:
 
 
 def find_near_duplicate(
-    sb: Client, amount: float, ts: datetime, window_minutes: int
+    sb: Client,
+    amount: float,
+    ts: datetime,
+    window_minutes: int,
+    bank: str,
+    incoming_source: str,
 ) -> dict[str, Any] | None:
-    """Fuzzy dedup: same amount within +/- window_minutes.
+    """Fuzzy dedup for the SAME real transfer seen from different channels.
 
-    Used to merge a LINE alert, an OneDrive slip, and a statement line that all
-    describe the same real transfer. Returns the existing row if found.
+    Matches same amount + same bank within +/- window_minutes, but ONLY against
+    rows from a *different* source. This is deliberate:
+      - it merges a LINE alert with its OneDrive slip / statement line, but
+      - it never merges two LINE alerts, so two genuine same-amount transfers a
+        few minutes apart are both kept.
+    Same-source exact repeats are handled separately by the unique dedup_key.
     """
     lo = (ts - timedelta(minutes=window_minutes)).isoformat()
     hi = (ts + timedelta(minutes=window_minutes)).isoformat()
@@ -61,6 +70,8 @@ def find_near_duplicate(
         sb.table("transactions")
         .select("*")
         .eq("amount", amount)
+        .eq("bank", bank)
+        .neq("source", incoming_source)
         .gte("ts", lo)
         .lte("ts", hi)
         .limit(1)

@@ -1,4 +1,8 @@
-"""Shared parsing utilities and the parser dispatcher."""
+"""Shared parsing utilities and the parser dispatcher.
+
+Routing: the phone sets payload["app"] to the bank code (KBANK / SCB / UOB),
+so dispatch is a reliable lookup rather than keyword sniffing.
+"""
 from __future__ import annotations
 
 import re
@@ -10,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from .. import config
 
-# --- Thai numeral handling ---------------------------------------------------
+# --- Thai numerals -----------------------------------------------------------
 _THAI_DIGITS = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
 
 
@@ -18,41 +22,34 @@ def thai_to_arabic(s: str) -> str:
     return s.translate(_THAI_DIGITS)
 
 
-# Money amount like 1,234.56 or 1234 or ๑,๒๓๔.๕๖
+# --- Thai month abbreviations (as they appear in KBANK alerts) ---------------
+THAI_MONTHS = {
+    "ม.ค.": 1, "ก.พ.": 2, "มี.ค.": 3, "เม.ย.": 4, "พ.ค.": 5, "มิ.ย.": 6,
+    "ก.ค.": 7, "ส.ค.": 8, "ก.ย.": 9, "ต.ค.": 10, "พ.ย.": 11, "ธ.ค.": 12,
+}
+
+
+def be2_to_ce(yy: int) -> int:
+    """2-digit Buddhist-era year -> Gregorian year. 69 -> 2569 BE -> 2026 CE."""
+    return 2500 + yy - 543
+
+
+# --- Generic amount helper (used by tests / fallback) ------------------------
 _AMOUNT_RE = re.compile(r"(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)")
 
 
-def parse_amount(text: str) -> Optional[float]:
-    """Pull the most likely money amount from a string.
+def first_amount(text: str) -> Optional[float]:
+    """First money-like number in the string (left to right).
 
-    Heuristic: prefer a number that appears near a currency marker
-    (บาท / ฿ / THB); otherwise fall back to the largest number found.
+    Important: banks often include a running balance later in the message, so
+    the FIRST amount (nearest the action) is the transaction amount.
     """
     text = thai_to_arabic(text)
-    # Prefer amounts adjacent to a currency marker.
-    near = re.findall(
-        r"(?:฿|THB\s*)?(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:บาท|฿|THB)?",
-        text,
-    )
-    candidates = [c for c in near if re.search(r"\d", c)]
-    if not candidates:
-        candidates = _AMOUNT_RE.findall(text)
-    if not candidates:
-        return None
-    values = [float(c.replace(",", "")) for c in candidates]
-    # Currency amounts almost always have decimals or are the largest token.
-    with_decimals = [v for v, c in zip(values, candidates) if "." in c]
-    return max(with_decimals) if with_decimals else max(values)
-
-
-# Account / card last-4 like x1234, xxxx1234, *1234, ...1234
-_LAST4_RE = re.compile(r"(?:x|X|\*|xxxx|XXXX|\.{2,})\s?(\d{4})")
-
-
-def parse_last4(text: str) -> Optional[str]:
-    text = thai_to_arabic(text)
-    m = _LAST4_RE.search(text)
-    return m.group(1) if m else None
+    m = re.search(r"(\d{1,3}(?:,\d{3})*(?:\.\d{2}))", text)
+    if m:
+        return float(m.group(1).replace(",", ""))
+    m = _AMOUNT_RE.search(text)
+    return float(m.group(1).replace(",", "")) if m else None
 
 
 def local_now() -> datetime:
@@ -60,18 +57,21 @@ def local_now() -> datetime:
 
 
 def ensure_tz(dt: datetime) -> datetime:
-    """Attach the configured local tz if naive, then convert to UTC."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo(config.LOCAL_TZ))
     return dt.astimezone(timezone.utc)
 
 
+def build_local_dt(y: int, mo: int, d: int, h: int = 0, mi: int = 0) -> datetime:
+    return ensure_tz(datetime(y, mo, d, h, mi))
+
+
 @dataclass
 class ParsedTxn:
     amount: float
-    direction: str  # 'debit' (money out) | 'credit' (money in)
+    direction: str  # 'debit' (out) | 'credit' (in)
     method: str  # 'bank' | 'credit_card' | 'cash'
-    bank: str  # 'KBANK' | 'UOB' | ...
+    bank: str  # 'KBANK' | 'SCB' | 'UOB'
     ts: datetime
     counterparty_name: Optional[str] = None
     account_masked: Optional[str] = None
@@ -84,72 +84,37 @@ class ParsedTxn:
         self.review_reasons.append(reason)
 
 
-# --- Direction keywords (Thai + English) ------------------------------------
-DEBIT_WORDS = [
-    "โอนออก", "โอนเงิน", "ชำระ", "จ่าย", "ถอน", "ซื้อ", "หักบัญชี",
-    "ใช้จ่าย", "เติมเงิน", "payment", "paid", "purchase", "withdraw", "debit",
-]
-CREDIT_WORDS = [
-    "รับโอน", "เงินเข้า", "รับเงิน", "โอนเข้า", "ฝาก", "คืนเงิน",
-    "received", "deposit", "refund", "credit",
-]
-
-
-def guess_direction(text: str) -> Optional[str]:
-    low = text.lower()
-    # Check credit first: "รับโอน" contains "โอน" which also appears in debit words.
-    if any(w.lower() in low for w in CREDIT_WORDS):
-        return "credit"
-    if any(w.lower() in low for w in DEBIT_WORDS):
-        return "debit"
-    return None
-
-
-# --- Parser registry ---------------------------------------------------------
-# Each parser: (title, text, ts_hint) -> Optional[ParsedTxn]
+# --- Parser registry, keyed by bank code ------------------------------------
 ParserFn = Callable[[str, str, datetime], Optional["ParsedTxn"]]
-_REGISTRY: list[ParserFn] = []
+_PARSERS: dict[str, ParserFn] = {}
 
 
-def register(fn: ParserFn) -> ParserFn:
-    _REGISTRY.append(fn)
-    return fn
+def register(bank_code: str) -> Callable[[ParserFn], ParserFn]:
+    def deco(fn: ParserFn) -> ParserFn:
+        _PARSERS[bank_code.upper()] = fn
+        return fn
+
+    return deco
 
 
-def dispatch(payload: dict) -> Optional[ParsedTxn]:
-    """Run each registered parser until one recognizes the message.
+def dispatch(payload: dict, fallback_ts: Optional[datetime] = None) -> Optional[ParsedTxn]:
+    """Route a raw notification to its bank parser via payload['app'].
 
-    payload keys (from MacroDroid / phone): title, text, timestamp (optional,
-    epoch seconds or ISO string).
+    payload keys from the phone: app, title, text.
+    fallback_ts: arrival time (raw_events.received_at) used when the message's
+    own timestamp is missing or truncated (LINE cuts long notifications off).
     """
+    app = str(payload.get("app", "") or "").strip().upper()
     title = str(payload.get("title", "") or "")
     text = str(payload.get("text", "") or "")
-    ts_hint = _coerce_ts(payload.get("timestamp"))
-    for fn in _REGISTRY:
-        result = fn(title, text, ts_hint)
-        if result is not None:
-            return result
-    return None
+    fb = fallback_ts or local_now()
+    fn = _PARSERS.get(app)
+    if fn is None:
+        return None
+    return fn(title, text, fb)
 
 
-def _coerce_ts(raw) -> datetime:
-    if raw is None or raw == "":
-        return local_now()
-    try:
-        # epoch seconds (or ms)
-        num = float(raw)
-        if num > 1e12:  # milliseconds
-            num /= 1000.0
-        return datetime.fromtimestamp(num, tz=timezone.utc)
-    except (TypeError, ValueError):
-        pass
-    try:
-        return datetime.fromisoformat(str(raw))
-    except ValueError:
-        return local_now()
-
-
-# Import concrete parsers so they self-register. Placed at the bottom to avoid
-# circular imports.
+# Import concrete parsers so they self-register (bottom to avoid cycles).
 from . import kbank as _kbank  # noqa: E402,F401
+from . import scb as _scb  # noqa: E402,F401
 from . import uob as _uob  # noqa: E402,F401
