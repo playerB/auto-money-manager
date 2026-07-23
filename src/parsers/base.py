@@ -75,6 +75,8 @@ class ParsedTxn:
     ts: datetime
     counterparty_name: Optional[str] = None
     account_masked: Optional[str] = None
+    counterparty_bank: Optional[str] = None      # slips: recipient's bank code
+    counterparty_account: Optional[str] = None   # slips: recipient's last-4
     is_internal: bool = False
     needs_review: bool = False
     review_reasons: list[str] = field(default_factory=list)

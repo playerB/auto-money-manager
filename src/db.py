@@ -83,3 +83,45 @@ def find_near_duplicate(
 def insert_transaction(sb: Client, row: dict[str, Any]) -> dict[str, Any]:
     resp = sb.table("transactions").insert(row).execute()
     return (resp.data or [{}])[0]
+
+
+def download_slip(sb: Client, bucket: str, path: str) -> bytes:
+    """Download a slip image from Supabase Storage (service key bypasses RLS)."""
+    return sb.storage.from_(bucket).download(path)
+
+
+def mark_matching_credit_internal(
+    sb: Client,
+    bank: str,
+    amount: float,
+    ts: datetime,
+    window_minutes: int,
+) -> int:
+    """Flag the recipient side of an internal transfer.
+
+    A slip for an own->own transfer produces a debit on the sender bank; the
+    matching credit lands separately (e.g. the SCB incoming alert). This marks
+    that credit as internal so it isn't counted as income.
+    """
+    if not bank:
+        return 0
+    lo = (ts - timedelta(minutes=window_minutes)).isoformat()
+    hi = (ts + timedelta(minutes=window_minutes)).isoformat()
+    resp = (
+        sb.table("transactions")
+        .select("id, is_internal")
+        .eq("bank", bank)
+        .eq("direction", "credit")
+        .eq("amount", amount)
+        .gte("ts", lo)
+        .lte("ts", hi)
+        .execute()
+    )
+    n = 0
+    for row in resp.data or []:
+        if not row.get("is_internal"):
+            sb.table("transactions").update({"is_internal": True}).eq(
+                "id", row["id"]
+            ).execute()
+            n += 1
+    return n

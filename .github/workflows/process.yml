@@ -26,6 +26,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Install Tesseract OCR (Thai + English)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr tesseract-ocr-tha
+
       - name: Install dependencies
         run: pip install -r requirements-processor.txt
 

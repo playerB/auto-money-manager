@@ -71,19 +71,26 @@ def run() -> dict[str, int]:
         event_id = event["id"]
         source = event.get("source")
 
-        # Phase 1 handles LINE events; other sources arrive in later phases.
-        if source != "line":
-            db.mark_event_processed(sb, event_id, error="source not yet handled")
-            continue
-
         payload = event.get("payload") or {}
         received_at = _parse_iso(event.get("received_at"))
-        txn = dispatch(payload, received_at)
-        if txn is None:
-            stats["unparsed"] += 1
-            app = str(payload.get("app", "?"))
-            db.mark_event_processed(sb, event_id, error=f"no parser for app={app}")
-            log.info("event %s: no parser for app=%s", event_id, app)
+
+        if source == "line":
+            txn = dispatch(payload, received_at)
+            if txn is None:
+                stats["unparsed"] += 1
+                app = str(payload.get("app", "?"))
+                db.mark_event_processed(sb, event_id, error=f"no parser for app={app}")
+                log.info("event %s: no parser for app=%s", event_id, app)
+                continue
+        elif source == "slip":
+            txn, err = _parse_slip_event(sb, payload, received_at)
+            if txn is None:
+                stats["unparsed"] += 1
+                db.mark_event_processed(sb, event_id, error=err)
+                log.info("event %s: slip not parsed (%s)", event_id, err)
+                continue
+        else:
+            db.mark_event_processed(sb, event_id, error="source not yet handled")
             continue
 
         dedup_key = build_dedup_key(txn)
@@ -125,8 +132,53 @@ def run() -> dict[str, int]:
             txn.counterparty_name or "?",
         )
 
+        # For an internal-transfer slip, flag the recipient-side credit too.
+        if source == "slip" and txn.is_internal and txn.counterparty_bank:
+            marked = db.mark_matching_credit_internal(
+                sb,
+                txn.counterparty_bank,
+                round(txn.amount, 2),
+                txn.ts,
+                config.INTERNAL_MATCH_WINDOW_MINUTES,
+            )
+            if marked:
+                log.info(
+                    "event %s: marked %d recipient credit(s) internal (%s)",
+                    event_id,
+                    marked,
+                    txn.counterparty_bank,
+                )
+
     log.info("Done: %s", stats)
     return stats
+
+
+def _parse_slip_event(sb, payload: dict, received_at) -> tuple[Any, Optional[str]]:
+    """Download + OCR + parse a slip raw_event. Returns (ParsedTxn|None, error)."""
+    from . import slips
+
+    path = payload.get("path") or payload.get("storage_path")
+    if not path:
+        return None, "slip payload has no storage path"
+    # Accept either "file.jpg" or "slips/file.jpg".
+    prefix = config.SLIP_BUCKET + "/"
+    if path.startswith(prefix):
+        path = path[len(prefix):]
+    folder_bank = payload.get("bank") or payload.get("source_app")
+    try:
+        image = db.download_slip(sb, config.SLIP_BUCKET, path)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"slip download failed: {exc}"
+    try:
+        text = slips.ocr_image(image)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"slip OCR failed: {exc}"
+    txn = slips.parse_slip(
+        text, received_at, config.OWNER_NAMES, folder_bank=folder_bank
+    )
+    if txn is None:
+        return None, "slip OCR text not recognized as a slip"
+    return txn, None
 
 
 if __name__ == "__main__":

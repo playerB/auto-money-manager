@@ -24,8 +24,25 @@ SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 LOCAL_TZ = os.environ.get("LOCAL_TZ", "Asia/Bangkok")
 
 # Fuzzy-dedup window: two same-amount transactions within this many minutes are
-# treated as the same real-world transfer (e.g. LINE alert + OneDrive slip).
+# treated as the same real-world transfer (e.g. LINE alert + slip).
 DEDUP_WINDOW_MINUTES = int(os.environ.get("DEDUP_WINDOW_MINUTES", "10"))
+
+# Supabase Storage bucket where the phone uploads transfer-slip images.
+SLIP_BUCKET = os.environ.get("SLIP_BUCKET", "slips")
+
+# Account-owner FULL names (comma-separated), Thai and/or English, as printed on
+# slips. Used to detect internal transfers: a slip is internal only when BOTH
+# sender and recipient match the owner. Give the fullest form you have — the
+# matcher tolerates redaction/abbreviation (ก / ก. / ก*** / KANO). Example:
+#   OWNER_NAMES="นาย ศุภวิชญ์ กนกพงศกร,SUPAWISH KANOKPONGSAKORN"
+OWNER_NAMES = [
+    k.strip() for k in os.environ.get("OWNER_NAMES", "").split(",") if k.strip()
+]
+
+# Window (minutes) for matching a slip's recipient credit to mark it internal.
+INTERNAL_MATCH_WINDOW_MINUTES = int(
+    os.environ.get("INTERNAL_MATCH_WINDOW_MINUTES", "180")
+)
 
 
 def require_supabase() -> None:
