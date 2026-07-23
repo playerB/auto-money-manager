@@ -6,8 +6,10 @@ name: process-transactions
 
 on:
   schedule:
-    - cron: "*/30 * * * *" # every 30 minutes (UTC)
-  workflow_dispatch: {} # manual "Run workflow" button
+    # Times are UTC; you are Asia/Bangkok (UTC+7).
+    # 02:00/10:00/13:00/19:00/21:00 BKK -> 19/03/06/12/14 UTC
+    - cron: "0 3,6,12,14,19 * * *"
+  workflow_dispatch: {}
 
 # Avoid overlapping runs if one is slow.
 concurrency:
