@@ -1,15 +1,20 @@
 name: process-transactions
 
-# Runs the parser on a schedule (every 30 min) and on manual trigger.
+# Triggers:
+#   - schedule: backstop runs so nothing is ever stranded.
+#   - workflow_dispatch: manual "Run workflow" button.
+#   - repository_dispatch (type raw_event): fired by a Supabase Database Webhook
+#     the instant a raw_events row is inserted (near-real-time processing).
 # Reads new raw_events from Supabase, writes normalized transactions.
-# Also keeps the free Supabase project from auto-pausing.
 
 on:
   schedule:
-    # Times are UTC; you are Asia/Bangkok (UTC+7).
+    # Times are UTC; user is Asia/Bangkok (UTC+7).
     # 02:00/10:00/13:00/19:00/21:00 BKK -> 19/03/06/12/14 UTC
     - cron: "0 3,6,12,14,19 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch: {} # manual "Run workflow" button
+  repository_dispatch:
+    types: [raw_event] # fired by the Supabase webhook on new raw_events
 
 # Avoid overlapping runs if one is slow.
 concurrency:
@@ -35,6 +40,14 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements-processor.txt
+
+      # Debounce: on a webhook trigger, wait ~1 min so a slip image and its
+      # paired app notification both land in raw_events before we process — this
+      # lets internal-transfer detection and recipient-credit reconciliation see
+      # both sides in one run. Scheduled/manual runs skip the wait.
+      - name: Debounce paired events
+        if: github.event_name == 'repository_dispatch'
+        run: sleep 60
 
       - name: Run processor
         env:
