@@ -84,10 +84,29 @@ still marked internal but flagged `needs_review` so you can confirm.
 4. Run the processor (Actions → Run workflow) and check `transactions` for the
    recorded transfer (internal transfers show `is_internal = true`).
 
+## Slip reading provider (EasySlip vs OCR)
+
+The processor can read slips two ways, set by the `SLIP_PROVIDER` env var/secret:
+
+- **`easyslip`** (recommended): sends the image to the EasySlip API
+  (`POST https://api.easyslip.com/v2/verify/bank`, header `Authorization: Bearer
+  <key>`, multipart field `image`). EasySlip reads the slip's QR code and returns
+  exact structured data — amount, real timestamp, sender/receiver bank + account
+  + name, transRef — so there's no OCR guessing. Set two GitHub Actions secrets:
+  `SLIP_PROVIDER=easyslip` and `EASYSLIP_API_KEY=<your key>`. The full EasySlip
+  response is logged back into the slip's `raw_events.payload` under `easyslip`.
+- **`ocr`** (default, free/local): Tesseract (Thai+English). Used when
+  `SLIP_PROVIDER` isn't `easyslip`, and as an automatic fallback if an EasySlip
+  call fails.
+
+The MacroDroid macro is identical either way — it just uploads the image and
+inserts the `gallery-<album>` event; the provider choice is server-side.
+
 ## Notes
 
-- The processor uses Tesseract (Thai+English), which reads amount/fee/names/
-  banks/account last-4 reliably. Reference numbers and occasionally dates are
-  unreliable, so dedup uses amount+time and the date falls back to upload time.
+- Tesseract (Thai+English) reads amount/fee/names/banks/account last-4 reliably.
+  Reference numbers and occasionally dates are unreliable, so dedup uses
+  amount+time and the date falls back to upload time. (EasySlip has none of these
+  limits — it returns verified fields.)
 - A slip for an own→own transfer produces a debit on the sender bank and marks
   the matching credit internal — both are excluded from spending/income.

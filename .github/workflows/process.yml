@@ -10,8 +10,8 @@ name: process-transactions
 on:
   schedule:
     # Times are UTC; user is Asia/Bangkok (UTC+7).
-    # 02:00/10:00/13:00/19:00/21:00 BKK -> 19/03/06/12/14 UTC
-    - cron: "0 3,6,12,14,19 * * *"
+    # 02:00 BKK -> 19 UTC
+    - cron: "0 19 * * *"
   workflow_dispatch: {} # manual "Run workflow" button
   repository_dispatch:
     types: [raw_event] # fired by the Supabase webhook on new raw_events
@@ -53,5 +53,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OWNER_NAMES: ${{ secrets.OWNER_NAMES }}
+          SLIP_PROVIDER: ${{ secrets.SLIP_PROVIDER }}
+          EASYSLIP_API_KEY: ${{ secrets.EASYSLIP_API_KEY }}
           LOCAL_TZ: Asia/Bangkok
         run: python -m src.process

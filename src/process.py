@@ -70,11 +70,11 @@ def _txn_to_row(
     }
 
 
-def _parse_event(sb, source: str, payload: dict, received_at):
+def _parse_event(sb, event_id, source: str, payload: dict, received_at):
     """Return (ParsedTxn|None, error, is_slip) for one event."""
     if source.startswith(GALLERY_PREFIX):
         album = source[len(GALLERY_PREFIX):]
-        txn, err = _parse_slip_event(sb, payload, received_at, album)
+        txn, err = _parse_slip_event(sb, event_id, payload, received_at, album)
         return txn, err, True
     if source == "line":
         txn = dispatch(payload, received_at)
@@ -144,7 +144,7 @@ def run() -> dict[str, int]:
         payload = event.get("payload") or {}
         received_at = _parse_iso(event.get("received_at"))
 
-        txn, err, is_slip = _parse_event(sb, source, payload, received_at)
+        txn, err, is_slip = _parse_event(sb, event_id, source, payload, received_at)
         if txn is None:
             stats["unparsed"] += 1
             db.mark_event_processed(sb, event_id, error=err)
@@ -212,9 +212,14 @@ def run() -> dict[str, int]:
 
 
 def _parse_slip_event(
-    sb, payload: dict, received_at, album: str
+    sb, event_id, payload: dict, received_at, album: str
 ) -> tuple[Any, Optional[str]]:
-    """Download + OCR + parse a slip raw_event. Returns (ParsedTxn|None, error)."""
+    """Read a slip raw_event into a ParsedTxn.
+
+    Provider EasySlip (config.SLIP_PROVIDER='easyslip') verifies the image via
+    the EasySlip API and returns exact structured data; on any failure, or when
+    the provider is 'ocr', it falls back to local Tesseract OCR.
+    """
     from . import slips
 
     path = payload.get("path") or payload.get("storage_path")
@@ -224,12 +229,36 @@ def _parse_slip_event(
     prefix = config.SLIP_BUCKET + "/"
     if path.startswith(prefix):
         path = path[len(prefix):]
-    # Bank hint from the album (one album = one bank), payload override allowed.
     folder_bank = payload.get("bank") or slips.bank_for_album(album)
+
     try:
         image = db.download_slip(sb, config.SLIP_BUCKET, path)
     except Exception as exc:  # noqa: BLE001
         return None, f"slip download failed: {exc}"
+
+    # --- EasySlip provider (structured, reliable) ---------------------------
+    if config.SLIP_PROVIDER == "easyslip" and config.EASYSLIP_API_KEY:
+        from . import easyslip
+
+        try:
+            status, body = easyslip.verify_image(image, path, config.EASYSLIP_API_KEY)
+        except Exception as exc:  # noqa: BLE001
+            status, body = 0, {"success": False, "error": {"message": str(exc)}}
+        # Log the EasySlip response back into the raw_event for audit.
+        db.merge_raw_event_payload(
+            sb, event_id, {"easyslip_status": status, "easyslip": body}
+        )
+        if status == 200 and body.get("success") and body.get("data"):
+            txn = easyslip.parse_easyslip(body["data"], config.OWNER_NAMES, received_at)
+            if txn is not None:
+                return txn, None
+            # Verified but couldn't map -> fall through to OCR.
+            log.info("event %s: easyslip ok but unmapped, trying OCR", event_id)
+        else:
+            err = (body.get("error") or {}).get("message") or f"status {status}"
+            log.info("event %s: easyslip failed (%s), trying OCR", event_id, err)
+
+    # --- OCR fallback -------------------------------------------------------
     try:
         text = slips.ocr_image(image)
     except Exception as exc:  # noqa: BLE001
@@ -237,7 +266,7 @@ def _parse_slip_event(
     parse = slips.parser_for_album(album)
     txn = parse(text, received_at, config.OWNER_NAMES, folder_bank=folder_bank)
     if txn is None:
-        return None, f"slip (album={album}) OCR text not recognized"
+        return None, f"slip (album={album}) not recognized"
     return txn, None
 
 

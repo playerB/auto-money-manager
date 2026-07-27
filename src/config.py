@@ -30,6 +30,11 @@ DEDUP_WINDOW_MINUTES = int(os.environ.get("DEDUP_WINDOW_MINUTES", "10"))
 # Supabase Storage bucket where the phone uploads transfer-slip images.
 SLIP_BUCKET = os.environ.get("SLIP_BUCKET", "slips")
 
+# Slip reading provider: "easyslip" (QR-verification API) or "ocr" (Tesseract).
+# EasySlip returns exact structured data; OCR is the free/local fallback.
+SLIP_PROVIDER = os.environ.get("SLIP_PROVIDER", "ocr").strip().lower()
+EASYSLIP_API_KEY = os.environ.get("EASYSLIP_API_KEY", "")
+
 # Account-owner FULL names (comma-separated), Thai and/or English, as printed on
 # slips. Used to detect internal transfers: a slip is internal only when BOTH
 # sender and recipient match the owner. Give the fullest form you have — the

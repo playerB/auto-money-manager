@@ -31,6 +31,14 @@ def fetch_unprocessed_events(sb: Client, limit: int = 200) -> list[dict[str, Any
     return resp.data or []
 
 
+def merge_raw_event_payload(sb: Client, event_id: int, extra: dict[str, Any]) -> None:
+    """Merge extra keys into a raw_event's payload (e.g. log the EasySlip response)."""
+    resp = sb.table("raw_events").select("payload").eq("id", event_id).limit(1).execute()
+    payload = (resp.data or [{}])[0].get("payload") or {}
+    payload.update(extra)
+    sb.table("raw_events").update({"payload": payload}).eq("id", event_id).execute()
+
+
 def mark_event_processed(
     sb: Client, event_id: int, error: str | None = None
 ) -> None:
