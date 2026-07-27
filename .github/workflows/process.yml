@@ -11,7 +11,7 @@ on:
   schedule:
     # Times are UTC; user is Asia/Bangkok (UTC+7).
     # 02:00/10:00/13:00/19:00/21:00 BKK -> 19/03/06/12/14 UTC
-    - cron: "0 3,6,12,14,19 * * *"
+    - cron: "0 19 * * *"
   workflow_dispatch: {} # manual "Run workflow" button
   repository_dispatch:
     types: [raw_event] # fired by the Supabase webhook on new raw_events
