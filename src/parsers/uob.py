@@ -70,6 +70,8 @@ def parse(title: str, text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
         txn.account_masked = card.group(1)
 
     if is_cancel:
-        txn.flag("UOB: cancelled/reversed charge (credit) — verify netting")
+        # Logged as-is (no auto-netting). As a credit-card credit it naturally
+        # reduces the card's outstanding balance (charges - credits).
+        txn.note("UOB: cancelled/reversed charge (reduces card balance)")
 
     return txn
