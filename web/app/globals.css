@@ -255,6 +255,77 @@ th.num {
   font-size: 13px;
 }
 
+/* Modal + form */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  z-index: 50;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  width: 100%;
+  max-width: 460px;
+  max-height: 90vh;
+  overflow: auto;
+}
+.field {
+  margin-bottom: 12px;
+}
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--page);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 8px;
+}
+.toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.toggle button {
+  flex: 1;
+  padding: 9px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+}
+.toggle button[data-active="true"] {
+  background: var(--series-1);
+  color: #fff;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
 /* Login */
 .login-wrap {
   min-height: 100vh;

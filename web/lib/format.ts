@@ -7,6 +7,13 @@ export function fmtBaht(n: number): string {
   return `฿${baht.format(n ?? 0)}`;
 }
 
+// Currency-aware: THB shows ฿, others show "1,234.00 USD".
+export function fmtMoney(n: number, currency?: string | null): string {
+  const cur = currency || "THB";
+  if (cur === "THB") return `฿${baht.format(n ?? 0)}`;
+  return `${baht.format(n ?? 0)} ${cur}`;
+}
+
 export function fmtDateTime(iso: string): string {
   const d = new Date(iso);
   return new Intl.DateTimeFormat("en-GB", {

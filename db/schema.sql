@@ -77,6 +77,7 @@ create table if not exists transactions (
     id              bigserial primary key,
     ts              timestamptz not null,
     amount          numeric(14, 2) not null,
+    currency        text not null default 'THB',
     direction       text not null check (direction in ('debit', 'credit')),
     method          text not null check (method in ('bank', 'credit_card', 'cash')),
     bank            text,                         -- 'KBANK' | 'SCB' | 'UOB' | ...

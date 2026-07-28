@@ -1,4 +1,4 @@
-import { fmtBaht, fmtDateTime } from "@/lib/format";
+import { fmtMoney, fmtDateTime } from "@/lib/format";
 import type { Txn } from "@/lib/types";
 
 export function TransactionsTable({
@@ -36,7 +36,7 @@ export function TransactionsTable({
                 <td>{t.category_id ? categories[t.category_id] ?? "—" : "—"}</td>
                 <td className={`num ${isCredit ? "amt-credit" : "amt-debit"}`}>
                   {sign}
-                  {fmtBaht(t.amount)}
+                  {fmtMoney(t.amount, t.currency)}
                 </td>
                 <td>
                   {t.is_internal ? <span className="badge">internal</span> : null}{" "}

@@ -1,7 +1,19 @@
+export type Category = { id: number; name: string };
+export type Subcategory = { id: number; category_id: number; name: string };
+
+export type Account = {
+  key: string;
+  label: string;
+  method: "cash" | "bank" | "credit_card";
+  bank: string | null;
+  account_masked: string | null;
+};
+
 export type Txn = {
   id: number;
   ts: string;
   amount: number;
+  currency: string | null;
   direction: "debit" | "credit";
   method: string;
   bank: string | null;
