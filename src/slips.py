@@ -68,24 +68,96 @@ _DATETIME_RE = re.compile(
 
 # --- Album registry ---------------------------------------------------------
 # A slip event's source is "gallery-<album>"; one album = one bank = one slip
-# style. Map the album to a bank hint and (later) a style-specific parser.
-ALBUM_BANK = {
-    "kplus": "KBANK",
+# style. Each album maps to a bank + a "kind":
+#   - "transfer"     → a bank transfer slip (KBANK K+). Uses SLIP_PROVIDER
+#     (EasySlip or OCR) + the generic transfer parser.
+#   - "card_payment" → a UOB/TMRW credit-card BILL PAYMENT slip. Always OCR +
+#     the dedicated payment parser; it reduces a card's outstanding balance.
+ALBUM_CONFIG: dict[str, dict[str, str]] = {
+    "kplus": {"bank": "KBANK", "kind": "transfer"},
+    "uob": {"bank": "UOB", "kind": "card_payment"},
 }
 
 
 def bank_for_album(album: Optional[str]) -> Optional[str]:
-    return ALBUM_BANK.get((album or "").lower())
+    cfg = ALBUM_CONFIG.get((album or "").lower())
+    return cfg["bank"] if cfg else None
+
+
+def album_kind(album: Optional[str]) -> str:
+    cfg = ALBUM_CONFIG.get((album or "").lower())
+    return cfg["kind"] if cfg else "transfer"
 
 
 def parser_for_album(album: Optional[str]):
-    """Return the parse function for an album's slip style.
-
-    Today every album uses the generic `parse_slip` (it reads the banks from the
-    slip content). When a bank's slip layout diverges, register a dedicated
-    parser here keyed by album.
-    """
+    """Return the transfer parser for an album's slip style (generic today)."""
     return parse_slip
+
+
+# --- UOB credit-card bill-payment slip --------------------------------------
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+# amount = the only number with a decimal (THB may OCR as "1118", so ignore it)
+_PAY_AMOUNT_RE = re.compile(r"([\d,]+\.\d{2})")
+# full card number "5432 1561 0042 1640" -> last group is the card's last 4
+_PAY_CARD_RE = re.compile(r"\d{4}\s+\d{4}\s+\d{4}\s+(\d{4})")
+_PAY_DATE_RE = re.compile(r"(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})")
+_PAY_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*(AM|PM)", re.IGNORECASE)
+
+
+def _pay_datetime(text: str, fallback: datetime) -> tuple[datetime, bool]:
+    dm = _PAY_DATE_RE.search(text)
+    if not dm or dm.group(2).lower() not in _MONTHS:
+        return base.ensure_tz(fallback), False
+    day, month, year = int(dm.group(1)), _MONTHS[dm.group(2).lower()], int(dm.group(3))
+    hour, minute = 0, 0
+    tm = _PAY_TIME_RE.search(text)
+    if tm:
+        hour, minute = int(tm.group(1)), int(tm.group(2))
+        ampm = tm.group(3).upper()
+        if ampm == "PM" and hour != 12:
+            hour += 12
+        elif ampm == "AM" and hour == 12:
+            hour = 0
+    try:
+        return base.build_local_dt(year, month, day, hour, minute), True
+    except ValueError:
+        return base.ensure_tz(fallback), False
+
+
+def parse_uob_payment(ocr_text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
+    """Parse a UOB/TMRW credit-card bill-payment slip.
+
+    Recorded as a credit_card CREDIT on the paid card (reduces its outstanding
+    balance). Not cash-flow spending/income (both exclude credit_card).
+    """
+    text = base.thai_to_arabic(ocr_text)
+
+    am = _PAY_AMOUNT_RE.search(text)
+    if not am:
+        return None
+    amount = float(am.group(1).replace(",", ""))
+
+    ts, _ok = _pay_datetime(text, fallback_ts)
+    txn = ParsedTxn(
+        amount=amount,
+        direction="credit",  # a payment reduces the card's outstanding balance
+        method="credit_card",
+        bank="UOB",
+        ts=ts,
+        counterparty_name="UOB card payment",
+    )
+
+    card = _PAY_CARD_RE.search(text)
+    if card:
+        txn.account_masked = card.group(1)
+    else:
+        txn.flag("UOB payment: card number not read")
+
+    txn.note("card bill payment")
+    return txn
 
 
 def ocr_image(image_bytes: bytes) -> str:
