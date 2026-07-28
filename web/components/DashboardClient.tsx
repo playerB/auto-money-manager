@@ -14,7 +14,7 @@ import { CreditCards } from "@/components/CreditCards";
 import { CategoryBars } from "@/components/CategoryBars";
 import { MonthlyBars } from "@/components/MonthlyBars";
 import { TransactionsTable } from "@/components/TransactionsTable";
-import { NewTransactionModal } from "@/components/NewTransactionModal";
+import { TransactionModal } from "@/components/NewTransactionModal";
 
 const RANGES: { key: RangeKey; label: string }[] = [
   { key: "7d", label: "7 days" },
@@ -32,7 +32,22 @@ export function DashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>("30d");
   const [bank, setBank] = useState("all");
-  const [showAdd, setShowAdd] = useState(false);
+  const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; txn: Txn } | null>(
+    null,
+  );
+
+  async function del(t: Txn) {
+    if (!window.confirm(`Delete this ${t.direction} of ${t.amount} ${t.currency ?? "THB"}?`)) {
+      return;
+    }
+    const res = await fetch(`/api/transactions?id=${t.id}`, { method: "DELETE" });
+    if (res.ok) {
+      load();
+    } else {
+      const j = await res.json().catch(() => ({}));
+      setError(j.error || "Delete failed");
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -167,7 +182,7 @@ export function DashboardClient() {
         <div style={{ display: "flex", gap: 8 }}>
           <button
             className="btn"
-            onClick={() => setShowAdd(true)}
+            onClick={() => setModal({ mode: "add" })}
             style={{ background: "var(--series-1)", color: "#fff", borderColor: "var(--series-1)" }}
           >
             ＋ Add
@@ -183,12 +198,13 @@ export function DashboardClient() {
         </div>
       </div>
 
-      {showAdd ? (
-        <NewTransactionModal
+      {modal ? (
+        <TransactionModal
           accounts={accounts}
           categories={cats}
           subcategories={subs}
-          onClose={() => setShowAdd(false)}
+          editing={modal.mode === "edit" ? modal.txn : null}
+          onClose={() => setModal(null)}
           onSaved={load}
         />
       ) : null}
@@ -248,7 +264,12 @@ export function DashboardClient() {
             <h2 className="section-title">
               Transactions{filtered.length > 500 ? ` (showing 500 of ${filtered.length})` : ""}
             </h2>
-            <TransactionsTable rows={filtered.slice(0, 500)} categories={categories} />
+            <TransactionsTable
+              rows={filtered.slice(0, 500)}
+              categories={categories}
+              onEdit={(t) => setModal({ mode: "edit", txn: t })}
+              onDelete={del}
+            />
           </div>
         </>
       )}

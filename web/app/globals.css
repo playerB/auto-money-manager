@@ -222,6 +222,30 @@ th.num {
   border-color: var(--critical);
 }
 
+/* Row actions */
+.actions-cell {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+}
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+.icon-btn:hover {
+  color: var(--text-primary);
+  background: var(--grid);
+}
+.icon-btn.danger:hover {
+  color: var(--critical);
+}
+
 /* Filters */
 .filters {
   display: flex;

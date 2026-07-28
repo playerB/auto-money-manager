@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Account, Category, Subcategory } from "@/lib/types";
+import type { Account, Category, Subcategory, Txn } from "@/lib/types";
 
 const CURRENCIES = ["THB", "USD", "EUR", "CHF", "JPY", "CNY"];
 
@@ -10,37 +10,59 @@ function nowDateInput(): string {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
-
 function nowTimeInput(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-export function NewTransactionModal({
+// Split a stored UTC ISO timestamp into Bangkok wall-clock date + time.
+function bkkParts(iso: string): { date: string; time: string } {
+  const s = new Date(new Date(iso).getTime() + 7 * 3600 * 1000).toISOString();
+  return { date: s.slice(0, 10), time: s.slice(11, 16) };
+}
+
+function accountKeyFor(t: Txn, accounts: Account[]): string {
+  if (t.method === "cash") return "cash";
+  const key = `${t.method}|${t.bank ?? ""}|${t.account_masked ?? ""}`;
+  return accounts.some((a) => a.key === key) ? key : accounts[0]?.key ?? "cash";
+}
+
+export function TransactionModal({
   accounts,
   categories,
   subcategories,
+  editing,
   onClose,
   onSaved,
 }: {
   accounts: Account[];
   categories: Category[];
   subcategories: Subcategory[];
+  editing?: Txn | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  // lang="en-GB" forces dd/mm/yyyy + 24-hour display on the native inputs.
-  const [dateVal, setDateVal] = useState(nowDateInput());
-  const [timeVal, setTimeVal] = useState(nowTimeInput());
-  const [accountKey, setAccountKey] = useState(accounts[0]?.key ?? "cash");
-  const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("THB");
-  const [direction, setDirection] = useState<"debit" | "credit">("debit");
-  const [counterparty, setCounterparty] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [subcategoryId, setSubcategoryId] = useState("");
-  const [note, setNote] = useState("");
+  const init = editing ? bkkParts(editing.ts) : null;
+
+  const [dateVal, setDateVal] = useState(init?.date ?? nowDateInput());
+  const [timeVal, setTimeVal] = useState(init?.time ?? nowTimeInput());
+  const [accountKey, setAccountKey] = useState(
+    editing ? accountKeyFor(editing, accounts) : accounts[0]?.key ?? "cash",
+  );
+  const [amount, setAmount] = useState(editing ? String(editing.amount) : "");
+  const [currency, setCurrency] = useState(editing?.currency ?? "THB");
+  const [direction, setDirection] = useState<"debit" | "credit">(
+    editing?.direction ?? "debit",
+  );
+  const [counterparty, setCounterparty] = useState(editing?.counterparty_name ?? "");
+  const [categoryId, setCategoryId] = useState(
+    editing?.category_id ? String(editing.category_id) : "",
+  );
+  const [subcategoryId, setSubcategoryId] = useState(
+    editing?.subcategory_id ? String(editing.subcategory_id) : "",
+  );
+  const [note, setNote] = useState(editing?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,22 +78,20 @@ export function NewTransactionModal({
       setError("Enter a valid amount.");
       return;
     }
-    const date = dateVal;
-    const time = timeVal;
-    if (!date || !time) {
+    if (!dateVal || !timeVal) {
       setError("Enter a valid date and time.");
       return;
     }
     const acct = accounts.find((a) => a.key === accountKey);
-    // Interpret the entered wall-clock time as Bangkok (+07:00).
-    const ts = `${date}T${time}:00+07:00`;
+    const ts = `${dateVal}T${timeVal}:00+07:00`; // entered time is Bangkok
 
     setSaving(true);
     try {
       const res = await fetch("/api/transactions", {
-        method: "POST",
+        method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(editing ? { id: editing.id } : {}),
           ts,
           amount: amt,
           currency,
@@ -99,7 +119,9 @@ export function NewTransactionModal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Add transaction</h2>
+        <h2 style={{ marginTop: 0, fontSize: 18 }}>
+          {editing ? "Edit transaction" : "Add transaction"}
+        </h2>
 
         <div className="row2-eq">
           <div className="field">
