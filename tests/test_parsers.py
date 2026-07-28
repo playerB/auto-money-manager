@@ -116,7 +116,7 @@ def test_uob_cancellation_is_credit():
     assert t.direction == "credit"
     assert t.amount == 399.00  # not the "9" in the merchant name
     assert t.counterparty_name == "KAMIKA-CENTRAL RAMA 9"
-    assert t.needs_review  # reversal -> verify netting
+    assert not t.needs_review  # logged as-is; reduces card balance, no review needed
 
 
 def test_uob_cancellation_ignores_balance():
