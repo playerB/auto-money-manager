@@ -42,11 +42,18 @@ export default async function Dashboard({
   if (since) q = q.gte("ts", since.toISOString());
   if (bank !== "all") q = q.eq("bank", bank);
 
-  const [{ data: txnData }, { data: catData }, { data: bankData }] = await Promise.all([
-    q,
-    sb.from("categories").select("id,name"),
-    sb.from("transactions").select("bank"),
-  ]);
+  const [{ data: txnData }, { data: catData }, { data: bankData }, { data: cardData }] =
+    await Promise.all([
+      q,
+      sb.from("categories").select("id,name"),
+      sb.from("transactions").select("bank"),
+      // Card balance is cumulative -> fetch ALL card transactions (ignore the
+      // date/bank filter). Charges are debits; refunds + bill payments are credits.
+      sb
+        .from("transactions")
+        .select("bank,account_masked,direction,amount,is_internal")
+        .eq("method", "credit_card"),
+    ]);
 
   const txns = (txnData || []) as Txn[];
   const categories: Record<number, string> = {};
@@ -68,11 +75,17 @@ export default async function Dashboard({
     .reduce((s, t) => s + Number(t.amount), 0);
   const reviewCount = txns.filter((t) => t.needs_review).length;
 
-  // Credit cards: charges (debit) minus refunds/cancellations (credit), per card.
-  // Payments aren't subtracted yet (coming via card-payment slips).
+  // Credit-card balance (cumulative, all-time): charges (debit) minus
+  // refunds/cancellations and bill payments (credit), per card.
   const cardMap = new Map<string, { label: string; net: number }>();
-  for (const t of external) {
-    if (t.method !== "credit_card") continue;
+  for (const t of (cardData || []) as Array<{
+    bank: string | null;
+    account_masked: string | null;
+    direction: string;
+    amount: number;
+    is_internal: boolean;
+  }>) {
+    if (t.is_internal) continue;
     const key = `${t.bank ?? "Card"}${t.account_masked ? " ••" + t.account_masked : ""}`;
     const cur = cardMap.get(key) ?? { label: key, net: 0 };
     cur.net += (t.direction === "debit" ? 1 : -1) * Number(t.amount);

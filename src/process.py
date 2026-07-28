@@ -236,6 +236,17 @@ def _parse_slip_event(
     except Exception as exc:  # noqa: BLE001
         return None, f"slip download failed: {exc}"
 
+    # --- Card-payment slips (UOB): always OCR + dedicated parser ------------
+    if slips.album_kind(album) == "card_payment":
+        try:
+            text = slips.ocr_image(image)
+        except Exception as exc:  # noqa: BLE001
+            return None, f"card-payment OCR failed: {exc}"
+        txn = slips.parse_uob_payment(text, received_at)
+        if txn is None:
+            return None, f"card-payment slip (album={album}) not recognized"
+        return txn, None
+
     # --- EasySlip provider (structured, reliable) ---------------------------
     if config.SLIP_PROVIDER == "easyslip" and config.EASYSLIP_API_KEY:
         from . import easyslip
