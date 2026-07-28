@@ -300,6 +300,11 @@ th.num {
   grid-template-columns: 1fr 96px;
   gap: 8px;
 }
+.row2-eq {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 .toggle {
   display: flex;
   border: 1px solid var(--border);

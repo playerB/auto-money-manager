@@ -5,12 +5,16 @@ import type { Account, Category, Subcategory } from "@/lib/types";
 
 const CURRENCIES = ["THB", "USD", "EUR", "CHF", "JPY", "CNY"];
 
-function nowLocalInput(): string {
+function nowDateInput(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(
-    d.getMinutes(),
-  )}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function nowTimeInput(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 export function NewTransactionModal({
@@ -26,7 +30,9 @@ export function NewTransactionModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [dt, setDt] = useState(nowLocalInput());
+  // lang="en-GB" forces dd/mm/yyyy + 24-hour display on the native inputs.
+  const [dateVal, setDateVal] = useState(nowDateInput());
+  const [timeVal, setTimeVal] = useState(nowTimeInput());
   const [accountKey, setAccountKey] = useState(accounts[0]?.key ?? "cash");
   const [amount, setAmount] = useState("");
   const [currency, setCurrency] = useState("THB");
@@ -50,9 +56,15 @@ export function NewTransactionModal({
       setError("Enter a valid amount.");
       return;
     }
+    const date = dateVal;
+    const time = timeVal;
+    if (!date || !time) {
+      setError("Enter a valid date and time.");
+      return;
+    }
     const acct = accounts.find((a) => a.key === accountKey);
     // Interpret the entered wall-clock time as Bangkok (+07:00).
-    const ts = (dt.length === 16 ? `${dt}:00` : dt) + "+07:00";
+    const ts = `${date}T${time}:00+07:00`;
 
     setSaving(true);
     try {
@@ -89,9 +101,28 @@ export function NewTransactionModal({
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Add transaction</h2>
 
-        <div className="field">
-          <label>Date &amp; time</label>
-          <input type="datetime-local" value={dt} onChange={(e) => setDt(e.target.value)} />
+        <div className="row2-eq">
+          <div className="field">
+            <label>Date</label>
+            <input
+              type="date"
+              lang="en-GB"
+              value={dateVal}
+              onChange={(e) => setDateVal(e.target.value)}
+              min="2000-01-01"
+              max="2100-12-31"
+            />
+          </div>
+          <div className="field">
+            <label>Time (24h)</label>
+            <input
+              type="time"
+              lang="en-GB"
+              step={60}
+              value={timeVal}
+              onChange={(e) => setTimeVal(e.target.value)}
+            />
+          </div>
         </div>
 
         <div className="field">
