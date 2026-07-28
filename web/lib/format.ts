@@ -28,6 +28,19 @@ export function monthKey(iso: string): string {
   }).format(d);
 }
 
+// Bangkok month key (YYYY-MM) and a display label, for the monthly chart.
+export function bkkMonthKey(iso: string): string {
+  const d = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
+  return d.toISOString().slice(0, 7);
+}
+
+export function monthLabel(key: string): string {
+  const [y, m] = key.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric" }).format(
+    new Date(Date.UTC(y, m - 1, 1)),
+  );
+}
+
 export type RangeKey = "7d" | "30d" | "90d" | "mtd" | "all";
 
 export function sinceForRange(range: RangeKey): Date | null {
