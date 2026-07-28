@@ -8,12 +8,13 @@ import {
   monthLabel,
   type RangeKey,
 } from "@/lib/format";
-import type { Txn } from "@/lib/types";
+import type { Account, Category, Subcategory, Txn } from "@/lib/types";
 import { StatTile } from "@/components/StatTile";
 import { CreditCards } from "@/components/CreditCards";
 import { CategoryBars } from "@/components/CategoryBars";
 import { MonthlyBars } from "@/components/MonthlyBars";
 import { TransactionsTable } from "@/components/TransactionsTable";
+import { NewTransactionModal } from "@/components/NewTransactionModal";
 
 const RANGES: { key: RangeKey; label: string }[] = [
   { key: "7d", label: "7 days" },
@@ -25,11 +26,13 @@ const RANGES: { key: RangeKey; label: string }[] = [
 
 export function DashboardClient() {
   const [txns, setTxns] = useState<Txn[]>([]);
-  const [cats, setCats] = useState<{ id: number; name: string }[]>([]);
+  const [cats, setCats] = useState<Category[]>([]);
+  const [subs, setSubs] = useState<Subcategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>("30d");
   const [bank, setBank] = useState("all");
+  const [showAdd, setShowAdd] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -40,6 +43,7 @@ export function DashboardClient() {
       const j = await res.json();
       setTxns(j.transactions ?? []);
       setCats(j.categories ?? []);
+      setSubs(j.subcategories ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -63,6 +67,31 @@ export function DashboardClient() {
     [txns],
   );
 
+  // Account options for the manual form: "Cash" + each bank account / card seen.
+  const accounts = useMemo<Account[]>(() => {
+    const list: Account[] = [
+      { key: "cash", label: "Cash", method: "cash", bank: null, account_masked: null },
+    ];
+    const seen = new Set<string>();
+    for (const t of txns) {
+      if (t.method === "cash" || !t.bank) continue;
+      const key = `${t.method}|${t.bank}|${t.account_masked ?? ""}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const label =
+        `${t.bank}${t.account_masked ? " ••" + t.account_masked : ""}` +
+        (t.method === "credit_card" ? " (card)" : "");
+      list.push({
+        key,
+        label,
+        method: t.method as Account["method"],
+        bank: t.bank,
+        account_masked: t.account_masked,
+      });
+    }
+    return list;
+  }, [txns]);
+
   // All filtering is in-memory -> instant.
   const filtered = useMemo(() => {
     const since = sinceForRange(range);
@@ -74,7 +103,10 @@ export function DashboardClient() {
   }, [txns, range, bank]);
 
   const metrics = useMemo(() => {
-    const external = filtered.filter((t) => !t.is_internal);
+    // THB-only for ฿ totals (foreign amounts show in the table but aren't summed).
+    const external = filtered.filter(
+      (t) => !t.is_internal && (t.currency ?? "THB") === "THB",
+    );
     const cashFlow = external.filter((t) => t.method !== "credit_card");
     const spend = cashFlow
       .filter((t) => t.direction === "debit")
@@ -118,6 +150,7 @@ export function DashboardClient() {
     const map = new Map<string, { label: string; net: number }>();
     for (const t of txns) {
       if (t.method !== "credit_card" || t.is_internal) continue;
+      if ((t.currency ?? "THB") !== "THB") continue;
       const key = `${t.bank ?? "Card"}${t.account_masked ? " ••" + t.account_masked : ""}`;
       const cur = map.get(key) ?? { label: key, net: 0 };
       cur.net += (t.direction === "debit" ? 1 : -1) * Number(t.amount);
@@ -132,6 +165,13 @@ export function DashboardClient() {
       <div className="topbar">
         <h1>💸 Money Manager</h1>
         <div style={{ display: "flex", gap: 8 }}>
+          <button
+            className="btn"
+            onClick={() => setShowAdd(true)}
+            style={{ background: "var(--series-1)", color: "#fff", borderColor: "var(--series-1)" }}
+          >
+            ＋ Add
+          </button>
           <button className="btn" onClick={load} disabled={loading}>
             {loading ? "Refreshing…" : "↻ Refresh"}
           </button>
@@ -142,6 +182,16 @@ export function DashboardClient() {
           </form>
         </div>
       </div>
+
+      {showAdd ? (
+        <NewTransactionModal
+          accounts={accounts}
+          categories={cats}
+          subcategories={subs}
+          onClose={() => setShowAdd(false)}
+          onSaved={load}
+        />
+      ) : null}
 
       {/* Filters — plain buttons, no navigation */}
       <div className="filters">
