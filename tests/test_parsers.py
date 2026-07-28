@@ -71,16 +71,63 @@ def test_scb_truncated_falls_back():
     assert not t.needs_review  # ts fallback is a note, not a review flag
 
 
-# --- UOB card (via LINE) -----------------------------------------------------
-def test_uob_card_purchase():
-    t = d("UOB", "UOB Thai", "มีการใช้บัตร UOB-8340 @TMN 7-11 1.00 THB วันที่ 23")
+# --- UOB card (via LINE) — real samples --------------------------------------
+def test_uob_purchase_no_currency():
+    t = d("UOB", "UOB Thai", "มีการใช้บัตร UOB-1640 @WWW.GRAB.COM 29.00")
     assert t.bank == "UOB" and t.method == "credit_card"
     assert t.direction == "debit"
-    assert t.amount == 1.00
+    assert t.amount == 29.00
+    assert t.account_masked == "1640"
+    assert t.counterparty_name == "WWW.GRAB.COM"
+    assert not t.needs_review
+
+
+def test_uob_purchase_ignores_balance():
+    t = d(
+        "UOB", "UOB Thai",
+        "มีการใช้บัตร UOB-8340 @(FOR SHOPEE)*(FOR SHOP 1,336.00 THB วันที่ 24/05 "
+        "วงเงินคงเหลือใช้ได้ 133,071.00 THB",
+    )
+    assert t.amount == 1336.00  # NOT the 133,071.00 balance
     assert t.account_masked == "8340"
-    assert t.counterparty_name == "TMN 7-11"
-    assert t.ts == FB  # day-only date -> arrival time
-    assert not t.is_internal
+    assert t.counterparty_name == "(FOR SHOPEE)*(FOR SHOP"
+    assert t.direction == "debit"
+
+
+def test_uob_merchant_with_digits():
+    t = d("UOB", "UOB Thai", "มีการใช้บัตร UOB-1640 @MITSUKOSHI DEPACHIKA 79.00 THB วันที่ 27/07 ")
+    assert t.amount == 79.00
+    assert t.counterparty_name == "MITSUKOSHI DEPACHIKA"
+
+
+def test_uob_foreign_currency_flagged():
+    t = d(
+        "UOB", "UOB Thai",
+        "มีการใช้บัตร UOB-9762 @TRENITALIA - LEFRECCE 14.8 EUR วันที่ 24/05 "
+        "วงเงินคงเหลือใช้ได้ 134,407.00 THB",
+    )
+    assert t.amount == 14.8
+    assert t.counterparty_name == "TRENITALIA - LEFRECCE"
+    assert t.needs_review  # foreign currency -> THB amount comes from statement
+
+
+def test_uob_cancellation_is_credit():
+    t = d("UOB", "UOB Thai", "มีการยกเลิกทำรายการบัตร UOB-1640 @KAMIKA-CENTRAL RAMA 9 399.00 THB")
+    assert t.direction == "credit"
+    assert t.amount == 399.00  # not the "9" in the merchant name
+    assert t.counterparty_name == "KAMIKA-CENTRAL RAMA 9"
+    assert t.needs_review  # reversal -> verify netting
+
+
+def test_uob_cancellation_ignores_balance():
+    t = d(
+        "UOB", "UOB Thai",
+        "มีการยกเลิกทำรายการบัตร UOB-8340 @(FOR SHOPEE)*(FOR SHOP 665.00 THB วันที่  30/12 "
+        "วงเงินคงเหลือใช้ได้ 19,061.00 THB",
+    )
+    assert t.direction == "credit"
+    assert t.amount == 665.00
+    assert t.account_masked == "8340"
 
 
 # --- routing + dedup ---------------------------------------------------------
