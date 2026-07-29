@@ -10,8 +10,12 @@
 create table if not exists accounts (
     id            bigserial primary key,
     type          text not null check (type in ('bank', 'credit_card', 'cash')),
-    bank_name     text,                       -- e.g. 'KBANK', 'UOB'
-    masked_number text,                       -- e.g. 'x1234' (last 4 digits)
+    bank_name     text,                       -- e.g. 'KBANK', 'SCB', 'UOB'
+    masked_number text,                       -- last 4 digits (display hint)
+    full_number   text,                       -- full account number, digits only
+                                              -- (banks; enables substring matching
+                                              --  across masking patterns). Null for
+                                              --  cards/cash.
     display_name  text,                       -- friendly label
     is_own        boolean not null default true,
     created_at    timestamptz not null default now()

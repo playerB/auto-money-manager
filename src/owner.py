@@ -99,9 +99,86 @@ def classify_transfer(
 
     Internal requires BOTH parties to match the owner. Confident when at least
     one side has a strong (non-redacted) surname match.
+
+    NOTE: name-only fallback. `classify_internal` (account-number aware) is the
+    preferred entry point; this remains for callers/tests without account data.
     """
     s_owner, s_strong = matcher.match(sender)
     r_owner, r_strong = matcher.match(recipient)
     if s_owner and r_owner:
         return True, (s_strong or r_strong)
     return False, False
+
+
+def own_account_match(bank, digits, accounts) -> bool:
+    """True when the revealed `digits` identify one of the owner's own accounts.
+
+    Different sources mask different windows of the SAME account number (SCB
+    shows ...6442, a KBANK slip shows ...7644 — both are substrings of the full
+    0384676442). So we substring-match the revealed digits against each own
+    account's stored `full_number` (and, as a weaker hint, its `masked_number`).
+
+    Bank scoping: if BOTH the transaction's bank and the account's bank_name are
+    known and differ, skip — a 4-digit coincidence across two different banks
+    should not read as the same account. When either bank is unknown we don't
+    scope (slips often omit the sender bank).
+    """
+    if not digits or not accounts:
+        return False
+    d = re.sub(r"\D", "", str(digits))
+    if not d:
+        return False
+    b = str(bank or "").upper()
+    for a in accounts:
+        if a.get("is_own") is False:
+            continue
+        abank = str(a.get("bank_name") or "").upper()
+        if b and abank and abank != b:
+            continue
+        full = re.sub(r"\D", "", str(a.get("full_number") or ""))
+        masked = re.sub(r"\D", "", str(a.get("masked_number") or ""))
+        if full and (d in full or full in d):
+            return True
+        if masked and (d == masked or d in masked or masked in d):
+            return True
+    return False
+
+
+def classify_internal(
+    matcher: OwnerMatcher,
+    accounts,
+    sender_name=None,
+    sender_bank=None,
+    sender_acct=None,
+    recipient_name=None,
+    recipient_bank=None,
+    recipient_acct=None,
+) -> tuple[bool, bool]:
+    """Return (is_internal, is_confident) using account numbers first, names as
+    fallback.
+
+    A side counts as "own" if its revealed account digits match one of your
+    stored accounts (primary signal) OR its name matches the owner (fallback).
+    The transfer is internal only when BOTH sides are own.
+
+    Confident unless BOTH sides are anchored only weakly (first-name-only / fully
+    redacted surname on each). A side backed by an account-number match or a
+    strong (non-redacted) surname match is a solid anchor; one solid anchor is
+    enough to trust the pair, since internal already requires both sides to match
+    the owner. When both sides are weak we still mark internal but flag it for
+    review.
+    """
+    accounts = accounts or []
+    s_acct = own_account_match(sender_bank, sender_acct, accounts)
+    r_acct = own_account_match(recipient_bank, recipient_acct, accounts)
+    s_name_ok, s_name_strong = matcher.match(sender_name)
+    r_name_ok, r_name_strong = matcher.match(recipient_name)
+
+    s_own = s_acct or s_name_ok
+    r_own = r_acct or r_name_ok
+    if not (s_own and r_own):
+        return False, False
+
+    # Solid anchor on either side (account match or strong surname) -> confident.
+    confident = (s_acct or s_name_strong) or (r_acct or r_name_strong)
+    return True, confident

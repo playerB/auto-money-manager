@@ -204,6 +204,7 @@ def parse_slip(
     fallback_ts: datetime,
     owner_names: Optional[list[str]] = None,
     folder_bank: Optional[str] = None,
+    accounts: Optional[list[dict]] = None,
 ) -> Optional[ParsedTxn]:
     """Parse a transfer slip's OCR text into a (debit) transaction.
 
@@ -245,9 +246,18 @@ def parse_slip(
         counterparty_account=recipient_acct,
     )
 
-    # Internal transfer: BOTH sender and recipient must be the owner.
-    is_internal, confident = owner_mod.classify_transfer(
-        matcher, sender_name, recipient_name
+    # Internal transfer: BOTH sender and recipient must be the owner. Account
+    # numbers are the primary signal (substring-matched against your stored
+    # full numbers); names are the fallback.
+    is_internal, confident = owner_mod.classify_internal(
+        matcher,
+        accounts,
+        sender_name=sender_name,
+        sender_bank=sender_bank,
+        sender_acct=sender_acct,
+        recipient_name=recipient_name,
+        recipient_bank=recipient_bank,
+        recipient_acct=recipient_acct,
     )
     if is_internal:
         txn.is_internal = True

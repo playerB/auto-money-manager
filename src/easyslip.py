@@ -85,7 +85,10 @@ def _account_number(account: Optional[dict]) -> Optional[str]:
 
 
 def parse_easyslip(
-    data: dict, owner_names: Optional[list[str]], fallback_ts: datetime
+    data: dict,
+    owner_names: Optional[list[str]],
+    fallback_ts: datetime,
+    accounts: Optional[list[dict]] = None,
 ) -> Optional[ParsedTxn]:
     """Map an EasySlip `data` object to a ParsedTxn (a debit on the sender bank)."""
     slip = (data or {}).get("rawSlip") or {}
@@ -128,8 +131,18 @@ def parse_easyslip(
     )
 
     matcher = owner_mod.OwnerMatcher(owner_names or [])
-    is_internal, confident = owner_mod.classify_transfer(
-        matcher, sender_name, recipient_name
+    # Account numbers are the primary internal-transfer signal; pass the raw
+    # (possibly masked) account strings so own_account_match can substring-match
+    # whatever digits EasySlip reveals against your stored full numbers.
+    is_internal, confident = owner_mod.classify_internal(
+        matcher,
+        accounts,
+        sender_name=sender_name,
+        sender_bank=sender_bank,
+        sender_acct=_account_number(sender_acct),
+        recipient_name=recipient_name,
+        recipient_bank=recipient_bank,
+        recipient_acct=_account_number(receiver_acct),
     )
     if is_internal:
         txn.is_internal = True

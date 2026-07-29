@@ -31,6 +31,13 @@ def fetch_unprocessed_events(sb: Client, limit: int = 200) -> list[dict[str, Any
     return resp.data or []
 
 
+def load_accounts(sb: Client) -> list[dict[str, Any]]:
+    """All configured accounts (bank / credit_card / cash) for internal-transfer
+    detection. Small table, fetched once per run."""
+    resp = sb.table("accounts").select("*").execute()
+    return resp.data or []
+
+
 def merge_raw_event_payload(sb: Client, event_id: int, extra: dict[str, Any]) -> None:
     """Merge extra keys into a raw_event's payload (e.g. log the EasySlip response)."""
     resp = sb.table("raw_events").select("payload").eq("id", event_id).limit(1).execute()

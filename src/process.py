@@ -70,11 +70,13 @@ def _txn_to_row(
     }
 
 
-def _parse_event(sb, event_id, source: str, payload: dict, received_at):
+def _parse_event(sb, event_id, source: str, payload: dict, received_at, accounts=None):
     """Return (ParsedTxn|None, error, is_slip) for one event."""
     if source.startswith(GALLERY_PREFIX):
         album = source[len(GALLERY_PREFIX):]
-        txn, err = _parse_slip_event(sb, event_id, payload, received_at, album)
+        txn, err = _parse_slip_event(
+            sb, event_id, payload, received_at, album, accounts=accounts
+        )
         return txn, err, True
     if source == "line":
         txn = dispatch(payload, received_at)
@@ -128,6 +130,7 @@ def run() -> dict[str, int]:
     sb = db.get_client()
     events = db.fetch_unprocessed_events(sb)
     rules = categorize.load_rules(sb)
+    accounts = db.load_accounts(sb)
 
     stats = {
         "events": len(events),
@@ -144,7 +147,9 @@ def run() -> dict[str, int]:
         payload = event.get("payload") or {}
         received_at = _parse_iso(event.get("received_at"))
 
-        txn, err, is_slip = _parse_event(sb, event_id, source, payload, received_at)
+        txn, err, is_slip = _parse_event(
+            sb, event_id, source, payload, received_at, accounts=accounts
+        )
         if txn is None:
             stats["unparsed"] += 1
             db.mark_event_processed(sb, event_id, error=err)
@@ -212,7 +217,7 @@ def run() -> dict[str, int]:
 
 
 def _parse_slip_event(
-    sb, event_id, payload: dict, received_at, album: str
+    sb, event_id, payload: dict, received_at, album: str, accounts=None
 ) -> tuple[Any, Optional[str]]:
     """Read a slip raw_event into a ParsedTxn.
 
@@ -260,7 +265,9 @@ def _parse_slip_event(
             sb, event_id, {"easyslip_status": status, "easyslip": body}
         )
         if status == 200 and body.get("success") and body.get("data"):
-            txn = easyslip.parse_easyslip(body["data"], config.OWNER_NAMES, received_at)
+            txn = easyslip.parse_easyslip(
+                body["data"], config.OWNER_NAMES, received_at, accounts=accounts
+            )
             if txn is not None:
                 return txn, None
             # Verified but couldn't map -> fall through to OCR.
@@ -275,7 +282,9 @@ def _parse_slip_event(
     except Exception as exc:  # noqa: BLE001
         return None, f"slip OCR failed: {exc}"
     parse = slips.parser_for_album(album)
-    txn = parse(text, received_at, config.OWNER_NAMES, folder_bank=folder_bank)
+    txn = parse(
+        text, received_at, config.OWNER_NAMES, folder_bank=folder_bank, accounts=accounts
+    )
     if txn is None:
         return None, f"slip (album={album}) not recognized"
     return txn, None
