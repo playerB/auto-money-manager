@@ -35,6 +35,22 @@ SLIP_BUCKET = os.environ.get("SLIP_BUCKET", "slips")
 SLIP_PROVIDER = os.environ.get("SLIP_PROVIDER", "ocr").strip().lower()
 EASYSLIP_API_KEY = os.environ.get("EASYSLIP_API_KEY", "")
 
+# Supabase Storage bucket where statement PDFs are uploaded (via the dashboard).
+STATEMENT_BUCKET = os.environ.get("STATEMENT_BUCKET", "statements")
+
+# Statement PDF passwords (Thai e-statements are often encrypted). KBANK and UOB
+# may differ; leave blank if a bank's PDFs open freely.
+KBANK_STATEMENT_PASSWORD = os.environ.get("KBANK_STATEMENT_PASSWORD", "")
+UOB_STATEMENT_PASSWORD = os.environ.get("UOB_STATEMENT_PASSWORD", "")
+
+
+def statement_password(bank: str) -> str:
+    """Return the configured PDF password for a bank's statements ('' if none)."""
+    return {
+        "KBANK": KBANK_STATEMENT_PASSWORD,
+        "UOB": UOB_STATEMENT_PASSWORD,
+    }.get((bank or "").upper(), "")
+
 # Account-owner FULL names (comma-separated), Thai and/or English, as printed on
 # slips. Used to detect internal transfers: a slip is internal only when BOTH
 # sender and recipient match the owner. Give the fullest form you have — the

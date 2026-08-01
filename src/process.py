@@ -34,6 +34,7 @@ NOTIF_SOURCE_PARSERS = {
 }
 
 GALLERY_PREFIX = "gallery-"
+STATEMENT_PREFIX = "statement-"
 
 
 def _parse_iso(value: Any) -> Optional[datetime]:
@@ -54,6 +55,10 @@ def _txn_to_row(
     return {
         "ts": txn.ts.isoformat(),
         "amount": round(txn.amount, 2),
+        "currency": getattr(txn, "currency", "THB"),
+        "thb_amount": (
+            round(txn.thb_amount, 2) if getattr(txn, "thb_amount", None) is not None else None
+        ),
         "direction": txn.direction,
         "method": txn.method,
         "bank": txn.bank,
@@ -126,6 +131,33 @@ def _enrich_from_slip(sb, existing: dict, txn) -> dict:
     return fields
 
 
+def _handle_statement_event(
+    sb, event_id, source, payload, received_at, rules, accounts, stats
+):
+    """Process a statement-<bank> event: parse, reconcile, anchor balances."""
+    from . import statements
+
+    bank = source[len(STATEMENT_PREFIX):] or (payload.get("bank") or "")
+    st, err = statements.process_statement_event(
+        sb, event_id, payload, received_at, bank, rules=rules, accounts=accounts
+    )
+    if err and not st:
+        stats["unparsed"] += 1
+        db.mark_event_processed(sb, event_id, error=err)
+        log.info("event %s: statement error: %s", event_id, err)
+        return
+    stats["inserted"] += st.get("inserted", 0)
+    stats["enriched"] += st.get("enriched", 0)
+    stats["duplicates"] += st.get("duplicates", 0)
+    stats["anchored"] += st.get("anchored", 0)
+    db.mark_event_processed(sb, event_id, error=err)
+    log.info(
+        "event %s: statement %s parsed rows=%s inserted=%s enriched=%s dup=%s anchored=%s",
+        event_id, bank, st.get("rows"), st.get("inserted"),
+        st.get("enriched"), st.get("duplicates"), st.get("anchored"),
+    )
+
+
 def run() -> dict[str, int]:
     sb = db.get_client()
     events = db.fetch_unprocessed_events(sb)
@@ -138,6 +170,7 @@ def run() -> dict[str, int]:
         "duplicates": 0,
         "enriched": 0,
         "unparsed": 0,
+        "anchored": 0,
     }
     log.info("Processing %d unprocessed events", len(events))
 
@@ -146,6 +179,13 @@ def run() -> dict[str, int]:
         source = event.get("source") or ""
         payload = event.get("payload") or {}
         received_at = _parse_iso(event.get("received_at"))
+
+        # Statement PDFs are one event -> many transactions + balance anchors.
+        if source.startswith(STATEMENT_PREFIX):
+            _handle_statement_event(
+                sb, event_id, source, payload, received_at, rules, accounts, stats
+            )
+            continue
 
         txn, err, is_slip = _parse_event(
             sb, event_id, source, payload, received_at, accounts=accounts

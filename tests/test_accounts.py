@@ -50,9 +50,13 @@ def test_bank_scoping_rejects_cross_bank_coincidence():
     assert own_account_match("KBANK", "6442", ACCOUNTS) is False
 
 
-def test_unknown_bank_is_not_scoped():
-    # Slips often omit the sender bank; an empty bank should still match.
-    assert own_account_match("", "7644", ACCOUNTS) is True
+def test_unknown_bank_requires_suffix_not_midwindow():
+    # With no bank to scope by, a mid-window substring is NOT trusted (a random
+    # 4-digit can coincidentally sit inside a full number) — only suffix/exact.
+    assert own_account_match("", "7644", ACCOUNTS) is False   # mid-window, unscoped
+    assert own_account_match("", "6442", ACCOUNTS) is True    # true suffix of SCB
+    # A friend's account whose digits happen to appear mid-way must not match.
+    assert own_account_match("", "6764", ACCOUNTS) is False   # inside 0384676442
 
 
 def test_card_last4_matches_via_masked_number():

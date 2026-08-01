@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   fmtBaht,
   sinceForRange,
@@ -8,7 +9,23 @@ import {
   monthLabel,
   type RangeKey,
 } from "@/lib/format";
-import type { Account, Category, Subcategory, Txn } from "@/lib/types";
+import type {
+  Account,
+  CardStatement,
+  Category,
+  DbAccount,
+  Subcategory,
+  Txn,
+} from "@/lib/types";
+
+// THB value of a transaction: the reconciled THB amount when set (foreign
+// charge resolved from a statement), else the amount when already THB, else
+// null (foreign, not yet reconciled -> excluded from ฿ totals).
+function thbValue(t: Txn): number | null {
+  if (t.thb_amount != null) return Number(t.thb_amount);
+  if ((t.currency ?? "THB") === "THB") return Number(t.amount);
+  return null;
+}
 import { StatTile } from "@/components/StatTile";
 import { CreditCards } from "@/components/CreditCards";
 import { CategoryBars } from "@/components/CategoryBars";
@@ -28,6 +45,8 @@ export function DashboardClient() {
   const [txns, setTxns] = useState<Txn[]>([]);
   const [cats, setCats] = useState<Category[]>([]);
   const [subs, setSubs] = useState<Subcategory[]>([]);
+  const [dbAccounts, setDbAccounts] = useState<DbAccount[]>([]);
+  const [cardStatements, setCardStatements] = useState<CardStatement[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>("30d");
@@ -59,6 +78,8 @@ export function DashboardClient() {
       setTxns(j.transactions ?? []);
       setCats(j.categories ?? []);
       setSubs(j.subcategories ?? []);
+      setDbAccounts(j.accounts ?? []);
+      setCardStatements(j.cardStatements ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -82,11 +103,33 @@ export function DashboardClient() {
     [txns],
   );
 
-  // Account options for the manual form: "Cash" + each bank account / card seen.
+  // Account options for the manual form. Prefer the real `accounts` table (so
+  // every configured account shows, incl. ones with no transactions yet); fall
+  // back to accounts seen in transactions only if the table is empty.
   const accounts = useMemo<Account[]>(() => {
     const list: Account[] = [
       { key: "cash", label: "Cash", method: "cash", bank: null, account_masked: null },
     ];
+    const own = dbAccounts.filter((a) => a.is_own !== false);
+    if (own.length > 0) {
+      for (const a of own) {
+        if (a.type === "cash") continue; // "Cash" is already the first option
+        const masked = a.masked_number ?? null;
+        const label =
+          a.display_name ||
+          `${a.bank_name ?? "Account"}${masked ? " ••" + masked : ""}` +
+            (a.type === "credit_card" ? " (card)" : "");
+        list.push({
+          key: `acct-${a.id}`,
+          label,
+          method: a.type as Account["method"],
+          bank: a.bank_name,
+          account_masked: masked,
+        });
+      }
+      return list;
+    }
+    // Fallback: derive from transactions.
     const seen = new Set<string>();
     for (const t of txns) {
       if (t.method === "cash" || !t.bank) continue;
@@ -105,7 +148,7 @@ export function DashboardClient() {
       });
     }
     return list;
-  }, [txns]);
+  }, [dbAccounts, txns]);
 
   // All filtering is in-memory -> instant.
   const filtered = useMemo(() => {
@@ -118,24 +161,23 @@ export function DashboardClient() {
   }, [txns, range, bank]);
 
   const metrics = useMemo(() => {
-    // THB-only for ฿ totals (foreign amounts show in the table but aren't summed).
-    const external = filtered.filter(
-      (t) => !t.is_internal && (t.currency ?? "THB") === "THB",
-    );
+    // THB value per row: reconciled THB (incl. resolved foreign) counts; foreign
+    // charges without a THB yet are excluded from ฿ totals.
+    const external = filtered.filter((t) => !t.is_internal && thbValue(t) != null);
     const cashFlow = external.filter((t) => t.method !== "credit_card");
     const spend = cashFlow
       .filter((t) => t.direction === "debit")
-      .reduce((s, t) => s + Number(t.amount), 0);
+      .reduce((s, t) => s + (thbValue(t) ?? 0), 0);
     const income = cashFlow
       .filter((t) => t.direction === "credit")
-      .reduce((s, t) => s + Number(t.amount), 0);
+      .reduce((s, t) => s + (thbValue(t) ?? 0), 0);
     const reviewCount = filtered.filter((t) => t.needs_review).length;
 
     const catTotals = new Map<string, number>();
     for (const t of external) {
       if (t.direction !== "debit") continue;
       const name = t.category_id ? categories[t.category_id] ?? "Uncategorized" : "Uncategorized";
-      catTotals.set(name, (catTotals.get(name) || 0) + Number(t.amount));
+      catTotals.set(name, (catTotals.get(name) || 0) + (thbValue(t) ?? 0));
     }
     let byCategory = [...catTotals.entries()]
       .map(([name, amount]) => ({ name, amount }))
@@ -150,7 +192,7 @@ export function DashboardClient() {
     for (const t of external) {
       if (t.direction !== "debit") continue;
       const k = bkkMonthKey(t.ts);
-      monthTotals.set(k, (monthTotals.get(k) || 0) + Number(t.amount));
+      monthTotals.set(k, (monthTotals.get(k) || 0) + (thbValue(t) ?? 0));
     }
     const monthly = [...monthTotals.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -160,20 +202,60 @@ export function DashboardClient() {
     return { spend, income, reviewCount, byCategory, monthly };
   }, [filtered, categories]);
 
-  // Card balance is cumulative: all card transactions (unfiltered), not internal.
-  const { cards, cardTotal } = useMemo(() => {
-    const map = new Map<string, { label: string; net: number }>();
+  // Per-card unpaid balance. When a statement anchor exists for a card, the true
+  // balance = that statement's closing balance + card movement AFTER the
+  // statement date (statement-sourced rows are all on/before it, so no double
+  // count). Without an anchor, fall back to all-time net (charges − payments).
+  const { cards, cardTotal, anchored } = useMemo(() => {
+    // latest anchor per card (list is newest-first from the API)
+    const latestAnchor = new Map<string, CardStatement>();
+    for (const a of cardStatements) {
+      const k = `${a.bank}|${a.card_masked}`;
+      if (!latestAnchor.has(k)) latestAnchor.set(k, a);
+    }
+
+    const map = new Map<
+      string,
+      { label: string; net: number; anchor?: CardStatement }
+    >();
     for (const t of txns) {
       if (t.method !== "credit_card" || t.is_internal) continue;
-      if ((t.currency ?? "THB") !== "THB") continue;
-      const key = `${t.bank ?? "Card"}${t.account_masked ? " ••" + t.account_masked : ""}`;
-      const cur = map.get(key) ?? { label: key, net: 0 };
-      cur.net += (t.direction === "debit" ? 1 : -1) * Number(t.amount);
-      map.set(key, cur);
+      const v = thbValue(t);
+      if (v == null) continue; // foreign, not yet reconciled
+      const masked = t.account_masked ?? "";
+      const label = `${t.bank ?? "Card"}${masked ? " ••" + masked : ""}`;
+      const anchor = latestAnchor.get(`${t.bank}|${masked}`);
+      const cur = map.get(label) ?? { label, net: 0, anchor };
+      if (anchor) {
+        // Only count movement strictly after the statement date.
+        const afterAnchor =
+          new Date(t.ts) > new Date(anchor.statement_date + "T23:59:59+07:00");
+        if (afterAnchor) cur.net += (t.direction === "debit" ? 1 : -1) * v;
+      } else {
+        cur.net += (t.direction === "debit" ? 1 : -1) * v;
+      }
+      map.set(label, cur);
     }
-    const list = [...map.values()].sort((a, b) => b.net - a.net);
-    return { cards: list, cardTotal: list.reduce((s, c) => s + c.net, 0) };
-  }, [txns]);
+    // Seed the anchor base for cards that have an anchor.
+    let anyAnchor = false;
+    for (const [k, a] of latestAnchor) {
+      const [b, m] = k.split("|");
+      const label = `${b}${m ? " ••" + m : ""}`;
+      anyAnchor = true;
+      const cur = map.get(label) ?? { label, net: 0, anchor: a };
+      cur.net += Number(a.closing_balance);
+      cur.anchor = a;
+      map.set(label, cur);
+    }
+    const list = [...map.values()]
+      .map((c) => ({ label: c.label, net: c.net }))
+      .sort((a, b) => b.net - a.net);
+    return {
+      cards: list,
+      cardTotal: list.reduce((s, c) => s + c.net, 0),
+      anchored: anyAnchor,
+    };
+  }, [txns, cardStatements]);
 
   return (
     <div className="container">
@@ -190,6 +272,9 @@ export function DashboardClient() {
           <button className="btn" onClick={load} disabled={loading}>
             {loading ? "Refreshing…" : "↻ Refresh"}
           </button>
+          <Link className="btn" href="/statements">
+            📄 Statements
+          </Link>
           <form method="post" action="/api/logout">
             <button className="btn" type="submit">
               Sign out
@@ -247,7 +332,9 @@ export function DashboardClient() {
             <StatTile label="Needs review" value={String(metrics.reviewCount)} />
           </div>
 
-          {cards.length > 0 ? <CreditCards total={cardTotal} cards={cards} /> : null}
+          {cards.length > 0 ? (
+            <CreditCards total={cardTotal} cards={cards} anchored={anchored} />
+          ) : null}
 
           <div className="grid-two">
             <div className="card">

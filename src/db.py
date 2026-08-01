@@ -113,6 +113,69 @@ def download_slip(sb: Client, bucket: str, path: str) -> bytes:
     return sb.storage.from_(bucket).download(path)
 
 
+def download_file(sb: Client, bucket: str, path: str) -> bytes:
+    """Download any file (e.g. a statement PDF) from Supabase Storage."""
+    return sb.storage.from_(bucket).download(path)
+
+
+def load_cc_transactions(
+    sb: Client,
+    bank: str,
+    cards: list[str],
+    lo: datetime,
+    hi: datetime,
+) -> list[dict[str, Any]]:
+    """Existing credit-card transactions for the given cards in a date range,
+    used to reconcile a statement against already-captured live rows. Excludes
+    rows already sourced from a statement."""
+    if not cards:
+        return []
+    resp = (
+        sb.table("transactions")
+        .select("*")
+        .eq("method", "credit_card")
+        .eq("bank", bank)
+        .in_("account_masked", cards)
+        .gte("ts", lo.isoformat())
+        .lte("ts", hi.isoformat())
+        .execute()
+    )
+    rows = resp.data or []
+    return [r for r in rows if not str(r.get("source") or "").startswith("statement-")]
+
+
+def load_bank_transactions(
+    sb: Client,
+    bank: str,
+    account_masked: str,
+    lo: datetime,
+    hi: datetime,
+) -> list[dict[str, Any]]:
+    """Existing bank transactions for one account in a date range, to reconcile
+    a bank statement against already-captured notifications/slips. Excludes rows
+    already sourced from a statement."""
+    q = (
+        sb.table("transactions")
+        .select("*")
+        .eq("method", "bank")
+        .eq("bank", bank)
+        .gte("ts", lo.isoformat())
+        .lte("ts", hi.isoformat())
+    )
+    if account_masked:
+        q = q.eq("account_masked", account_masked)
+    resp = q.execute()
+    rows = resp.data or []
+    return [r for r in rows if not str(r.get("source") or "").startswith("statement-")]
+
+
+def upsert_card_statement(sb: Client, row: dict[str, Any]) -> None:
+    """Insert or update a card_statements anchor (unique on bank+card+date)."""
+    sb.table("card_statements").upsert(
+        row, on_conflict="bank,card_masked,statement_date"
+    ).execute()
+
+
 def mark_matching_credit_internal(
     sb: Client,
     bank: str,
