@@ -82,6 +82,8 @@ create table if not exists transactions (
     ts              timestamptz not null,
     amount          numeric(14, 2) not null,
     currency        text not null default 'THB',
+    thb_amount      numeric(14, 2),               -- authoritative THB when amount
+                                                  --  is foreign (from a statement)
     direction       text not null check (direction in ('debit', 'credit')),
     method          text not null check (method in ('bank', 'credit_card', 'cash')),
     bank            text,                         -- 'KBANK' | 'SCB' | 'UOB' | ...
@@ -101,6 +103,26 @@ create table if not exists transactions (
 );
 create index if not exists idx_transactions_ts on transactions (ts);
 create index if not exists idx_transactions_amount_ts on transactions (amount, ts);
+
+-- ---------------------------------------------------------------------------
+-- card_statements: one row per credit card per statement month. The closing
+-- balance anchors the card's true unpaid balance (see migration 009).
+-- ---------------------------------------------------------------------------
+create table if not exists card_statements (
+    id               bigserial primary key,
+    bank             text not null default 'UOB',
+    card_masked      text not null,                 -- last 4
+    statement_date   date not null,
+    closing_balance  numeric(14, 2) not null,       -- TOTAL BALANCE for the card
+    previous_balance numeric(14, 2),
+    min_payment      numeric(14, 2),
+    due_date         date,
+    raw_event_id     bigint references raw_events(id) on delete set null,
+    created_at       timestamptz not null default now(),
+    unique (bank, card_masked, statement_date)
+);
+create index if not exists idx_card_statements_card
+    on card_statements (bank, card_masked, statement_date);
 
 -- keep updated_at fresh
 create or replace function set_updated_at() returns trigger as $$

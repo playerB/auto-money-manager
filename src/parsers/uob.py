@@ -61,6 +61,7 @@ def parse(title: str, text: str, fallback_ts: datetime) -> Optional[ParsedTxn]:
             txn.flag("UOB: empty merchant")
         cur = (m.group("cur") or "THB").upper()
         if cur != "THB":
+            txn.currency = cur
             txn.flag(f"UOB: foreign currency {cur} {txn.amount} — THB amount from statement")
     else:
         txn.flag("UOB: could not parse amount/merchant")

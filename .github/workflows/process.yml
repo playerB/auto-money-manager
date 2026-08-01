@@ -56,5 +56,6 @@ jobs:
           OWNER_NAMES: ${{ secrets.OWNER_NAMES }}
           SLIP_PROVIDER: ${{ secrets.SLIP_PROVIDER }}
           EASYSLIP_API_KEY: ${{ secrets.EASYSLIP_API_KEY }}
+          KBANK_STATEMENT_PASSWORD: ${{ secrets.KBANK_STATEMENT_PASSWORD }}
           LOCAL_TZ: Asia/Bangkok
         run: python -m src.process

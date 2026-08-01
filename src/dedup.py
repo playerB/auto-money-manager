@@ -28,3 +28,33 @@ def build_dedup_key(txn: ParsedTxn) -> str:
         ]
     )
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]
+
+
+def build_statement_dedup_key(
+    bank: str,
+    card_masked: str,
+    statement_date: str,
+    seq: int,
+    amount: float,
+    direction: str,
+) -> str:
+    """Stable key for a statement line.
+
+    A statement can list two genuinely-distinct identical charges on the same day
+    (e.g. two 12.00 7-Eleven taps), so the transaction-level dedup_key (which
+    would collide) is unsafe here. We key on the statement identity + the row's
+    position within it, which is deterministic across re-uploads of the same
+    statement — so re-importing is idempotent while distinct rows stay distinct.
+    """
+    basis = "|".join(
+        [
+            "stmt",
+            bank,
+            card_masked or "",
+            statement_date,
+            str(seq),
+            f"{amount:.2f}",
+            direction,
+        ]
+    )
+    return hashlib.sha256(basis.encode("utf-8")).hexdigest()[:32]

@@ -113,15 +113,18 @@ def classify_transfer(
 def own_account_match(bank, digits, accounts) -> bool:
     """True when the revealed `digits` identify one of the owner's own accounts.
 
-    Different sources mask different windows of the SAME account number (SCB
+    Different sources mask different WINDOWS of the SAME account number (SCB
     shows ...6442, a KBANK slip shows ...7644 — both are substrings of the full
-    0384676442). So we substring-match the revealed digits against each own
-    account's stored `full_number` (and, as a weaker hint, its `masked_number`).
+    0384676442). To catch those we substring-match the revealed digits against
+    each own account's `full_number` — but only when the transaction's bank is
+    KNOWN and matches the account's bank ("scoped"). That mid-window matching is
+    powerful but unsafe unscoped: a random 4-digit counterparty account can
+    coincidentally appear mid-way through an unrelated full number (a friend's
+    ...6764 sits inside 0384676442). So when the bank is unknown we require the
+    stricter SUFFIX/exact alignment instead of arbitrary mid-substring.
 
     Bank scoping: if BOTH the transaction's bank and the account's bank_name are
-    known and differ, skip — a 4-digit coincidence across two different banks
-    should not read as the same account. When either bank is unknown we don't
-    scope (slips often omit the sender bank).
+    known and differ, skip.
     """
     if not digits or not accounts:
         return False
@@ -135,12 +138,21 @@ def own_account_match(bank, digits, accounts) -> bool:
         abank = str(a.get("bank_name") or "").upper()
         if b and abank and abank != b:
             continue
+        scoped = bool(b and abank and abank == b)
         full = re.sub(r"\D", "", str(a.get("full_number") or ""))
         masked = re.sub(r"\D", "", str(a.get("masked_number") or ""))
-        if full and (d in full or full in d):
-            return True
-        if masked and (d == masked or d in masked or masked in d):
-            return True
+        if scoped:
+            # bank confirmed -> allow window (mid-substring) matching
+            if full and (d in full or full in d):
+                return True
+            if masked and (d == masked or d in masked or masked in d):
+                return True
+        else:
+            # bank unknown -> only trust exact last-4 or suffix alignment
+            if masked and d == masked:
+                return True
+            if full and (full.endswith(d) or d.endswith(full)):
+                return True
     return False
 
 
