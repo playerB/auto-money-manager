@@ -1,14 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import {
-  fmtBaht,
-  sinceForRange,
-  bkkMonthKey,
-  monthLabel,
-  type RangeKey,
-} from "@/lib/format";
+import { fmtBaht, sinceForRange, type RangeKey } from "@/lib/format";
+import { colorFor } from "@/lib/palette";
 import type {
   Account,
   CardStatement,
@@ -17,20 +11,13 @@ import type {
   Subcategory,
   Txn,
 } from "@/lib/types";
-
-// THB value of a transaction: the reconciled THB amount when set (foreign
-// charge resolved from a statement), else the amount when already THB, else
-// null (foreign, not yet reconciled -> excluded from ฿ totals).
-function thbValue(t: Txn): number | null {
-  if (t.thb_amount != null) return Number(t.thb_amount);
-  if ((t.currency ?? "THB") === "THB") return Number(t.amount);
-  return null;
-}
-import { StatTile } from "@/components/StatTile";
+import { AppShell } from "@/components/AppShell";
+import { ExpensesPanel } from "@/components/ExpensesPanel";
+import { IncomePanel } from "@/components/IncomePanel";
+import { IncomeBreakdown } from "@/components/IncomeBreakdown";
+import { RecentTransactions } from "@/components/RecentTransactions";
 import { CreditCards } from "@/components/CreditCards";
-import { CategoryBars } from "@/components/CategoryBars";
-import { MonthlyBars } from "@/components/MonthlyBars";
-import { TransactionsTable } from "@/components/TransactionsTable";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { TransactionModal } from "@/components/NewTransactionModal";
 
 const RANGES: { key: RangeKey; label: string }[] = [
@@ -40,6 +27,13 @@ const RANGES: { key: RangeKey; label: string }[] = [
   { key: "mtd", label: "This month" },
   { key: "all", label: "All" },
 ];
+
+// THB value of a row: reconciled THB when set, else amount when THB, else null.
+function thbValue(t: Txn): number | null {
+  if (t.thb_amount != null) return Number(t.thb_amount);
+  if ((t.currency ?? "THB") === "THB") return Number(t.amount);
+  return null;
+}
 
 export function DashboardClient() {
   const [txns, setTxns] = useState<Txn[]>([]);
@@ -51,6 +45,8 @@ export function DashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>("30d");
   const [bank, setBank] = useState("all");
+  const [search, setSearch] = useState("");
+  const [updatedAt, setUpdatedAt] = useState<string>("");
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; txn: Txn } | null>(
     null,
   );
@@ -60,9 +56,8 @@ export function DashboardClient() {
       return;
     }
     const res = await fetch(`/api/transactions?id=${t.id}`, { method: "DELETE" });
-    if (res.ok) {
-      load();
-    } else {
+    if (res.ok) load();
+    else {
       const j = await res.json().catch(() => ({}));
       setError(j.error || "Delete failed");
     }
@@ -80,6 +75,14 @@ export function DashboardClient() {
       setSubs(j.subcategories ?? []);
       setDbAccounts(j.accounts ?? []);
       setCardStatements(j.cardStatements ?? []);
+      setUpdatedAt(
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: "Asia/Bangkok",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(new Date()),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -97,15 +100,12 @@ export function DashboardClient() {
     return m;
   }, [cats]);
 
-  // Fetched once; the bank list is derived here, not re-queried per click.
   const banks = useMemo(
     () => Array.from(new Set(txns.map((t) => t.bank).filter(Boolean))).sort() as string[],
     [txns],
   );
 
-  // Account options for the manual form. Prefer the real `accounts` table (so
-  // every configured account shows, incl. ones with no transactions yet); fall
-  // back to accounts seen in transactions only if the table is empty.
+  // Modal account options: prefer the real accounts table.
   const accounts = useMemo<Account[]>(() => {
     const list: Account[] = [
       { key: "cash", label: "Cash", method: "cash", bank: null, account_masked: null },
@@ -113,7 +113,7 @@ export function DashboardClient() {
     const own = dbAccounts.filter((a) => a.is_own !== false);
     if (own.length > 0) {
       for (const a of own) {
-        if (a.type === "cash") continue; // "Cash" is already the first option
+        if (a.type === "cash") continue;
         const masked = a.masked_number ?? null;
         const label =
           a.display_name ||
@@ -129,7 +129,6 @@ export function DashboardClient() {
       }
       return list;
     }
-    // Fallback: derive from transactions.
     const seen = new Set<string>();
     for (const t of txns) {
       if (t.method === "cash" || !t.bank) continue;
@@ -150,139 +149,200 @@ export function DashboardClient() {
     return list;
   }, [dbAccounts, txns]);
 
-  // All filtering is in-memory -> instant.
+  // --- Expense/Income recap — respects the range + bank + search filters ----
+  // Current window from the range chip; the previous equal-length window drives
+  // the % change and its wording (vs last week / month / quarter).
+  const recap = useMemo(() => {
+    const DAY = 864e5;
+    const now = Date.now();
+    const d = new Date();
+    let curLo = 0;
+    let curHi = now;
+    let prevLo: number | null = null;
+    let prevHi: number | null = null;
+    let label: string | null = null;
+    if (range === "7d") {
+      curLo = now - 7 * DAY; prevLo = now - 14 * DAY; prevHi = now - 7 * DAY; label = "vs last week";
+    } else if (range === "30d") {
+      curLo = now - 30 * DAY; prevLo = now - 60 * DAY; prevHi = now - 30 * DAY; label = "vs last month";
+    } else if (range === "90d") {
+      curLo = now - 90 * DAY; prevLo = now - 180 * DAY; prevHi = now - 90 * DAY; label = "vs last quarter";
+    } else if (range === "mtd") {
+      curLo = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+      prevLo = new Date(d.getFullYear(), d.getMonth() - 1, 1).getTime();
+      prevHi = new Date(
+        d.getFullYear(), d.getMonth() - 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(),
+      ).getTime();
+      label = "vs last month";
+    } // "all": curLo=0, no previous window, no label
+
+    const q = search.trim().toLowerCase();
+    const base = txns.filter((t) => {
+      if (bank !== "all" && t.bank !== bank) return false;
+      if (q) {
+        const cat = t.category_id ? categories[t.category_id] ?? "" : "";
+        const hay = `${t.counterparty_name ?? ""} ${cat} ${t.bank ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    const ext = base.filter((t) => !t.is_internal && thbValue(t) != null);
+    const inWin = (t: Txn, lo: number, hi: number) => {
+      const ts = new Date(t.ts).getTime();
+      return ts >= lo && ts <= hi;
+    };
+    const sumExp = (lo: number, hi: number) =>
+      ext.filter((t) => t.direction === "debit" && inWin(t, lo, hi)).reduce((s, t) => s + (thbValue(t) ?? 0), 0);
+    const sumInc = (lo: number, hi: number) =>
+      ext
+        .filter((t) => t.direction === "credit" && t.method !== "credit_card" && inWin(t, lo, hi))
+        .reduce((s, t) => s + (thbValue(t) ?? 0), 0);
+
+    const expenseTotal = sumExp(curLo, curHi);
+    const incomeTotal = sumInc(curLo, curHi);
+    const expPrev = prevLo !== null && prevHi !== null ? sumExp(prevLo, prevHi) : null;
+    const incPrev = prevLo !== null && prevHi !== null ? sumInc(prevLo, prevHi) : null;
+    const expenseChangePct = expPrev && expPrev > 0 ? ((expenseTotal - expPrev) / expPrev) * 100 : null;
+    const incomeChangePct = incPrev && incPrev > 0 ? ((incomeTotal - incPrev) / incPrev) * 100 : null;
+
+    // expense-by-category for the current window + previous window (for per-tile %)
+    const catMap = new Map<string, number>();
+    const prevCatMap = new Map<string, number>();
+    for (const t of ext) {
+      if (t.direction !== "debit") continue;
+      const name = t.category_id ? categories[t.category_id] ?? "Uncategorized" : "Uncategorized";
+      if (inWin(t, curLo, curHi)) catMap.set(name, (catMap.get(name) ?? 0) + (thbValue(t) ?? 0));
+      else if (prevLo !== null && prevHi !== null && inWin(t, prevLo, prevHi))
+        prevCatMap.set(name, (prevCatMap.get(name) ?? 0) + (thbValue(t) ?? 0));
+    }
+    const havePrev = prevLo !== null;
+    const fullCats = [...catMap.entries()]
+      .map(([name, amount]) => ({ name, amount, prev: prevCatMap.get(name) ?? 0 }))
+      .sort((a, b) => b.amount - a.amount);
+    let catItems = fullCats;
+    if (fullCats.length > 6) {
+      const top = fullCats.slice(0, 6);
+      const rest = fullCats.slice(6);
+      catItems = [
+        ...top,
+        {
+          name: "Other",
+          amount: rest.reduce((s, x) => s + x.amount, 0),
+          prev: rest.reduce((s, x) => s + x.prev, 0),
+        },
+      ];
+    }
+    const breakdown = catItems.map((x) => ({
+      name: x.name,
+      amount: x.amount,
+      color: colorFor(x.name),
+      changePct: havePrev && x.prev > 0 ? ((x.amount - x.prev) / x.prev) * 100 : null,
+    }));
+
+    const curInc = ext.filter(
+      (t) => t.direction === "credit" && t.method !== "credit_card" && inWin(t, curLo, curHi),
+    );
+    const srcMap = new Map<string, number>();
+    for (const t of curInc) {
+      const name =
+        t.counterparty_name || (t.category_id ? categories[t.category_id] : null) || "Other income";
+      srcMap.set(name, (srcMap.get(name) ?? 0) + (thbValue(t) ?? 0));
+    }
+    let sources = [...srcMap.entries()]
+      .map(([name, amount]) => ({ name, amount, color: colorFor(name) }))
+      .sort((a, b) => b.amount - a.amount);
+    if (sources.length > 6) {
+      const top = sources.slice(0, 6);
+      const other = sources.slice(6).reduce((s, x) => s + x.amount, 0);
+      sources = [...top, { name: "Other", amount: other, color: colorFor("Other") }];
+    }
+
+    const barPct = incPrev && incPrev > 0 ? (incomeTotal / Math.max(incomeTotal, incPrev)) * 100 : 100;
+
+    return {
+      expenseTotal,
+      incomeTotal,
+      expenseChangePct,
+      incomeChangePct,
+      breakdown,
+      sources,
+      periodLabel: label,
+      barPct,
+    };
+  }, [txns, categories, range, bank, search]);
+
+  // --- Recent transactions list (range + bank + search) --------------------
   const filtered = useMemo(() => {
     const since = sinceForRange(range);
+    const q = search.trim().toLowerCase();
     return txns.filter((t) => {
       if (bank !== "all" && t.bank !== bank) return false;
       if (since && new Date(t.ts) < since) return false;
+      if (q) {
+        const cat = t.category_id ? categories[t.category_id] ?? "" : "";
+        const hay = `${t.counterparty_name ?? ""} ${cat} ${t.bank ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       return true;
     });
-  }, [txns, range, bank]);
+  }, [txns, range, bank, search, categories]);
 
-  const metrics = useMemo(() => {
-    // THB value per row: reconciled THB (incl. resolved foreign) counts; foreign
-    // charges without a THB yet are excluded from ฿ totals.
-    const external = filtered.filter((t) => !t.is_internal && thbValue(t) != null);
-    const cashFlow = external.filter((t) => t.method !== "credit_card");
-    const spend = cashFlow
-      .filter((t) => t.direction === "debit")
-      .reduce((s, t) => s + (thbValue(t) ?? 0), 0);
-    const income = cashFlow
-      .filter((t) => t.direction === "credit")
-      .reduce((s, t) => s + (thbValue(t) ?? 0), 0);
-    const reviewCount = filtered.filter((t) => t.needs_review).length;
-
-    const catTotals = new Map<string, number>();
-    for (const t of external) {
-      if (t.direction !== "debit") continue;
-      const name = t.category_id ? categories[t.category_id] ?? "Uncategorized" : "Uncategorized";
-      catTotals.set(name, (catTotals.get(name) || 0) + (thbValue(t) ?? 0));
-    }
-    let byCategory = [...catTotals.entries()]
-      .map(([name, amount]) => ({ name, amount }))
-      .sort((a, b) => b.amount - a.amount);
-    if (byCategory.length > 8) {
-      const top = byCategory.slice(0, 7);
-      const other = byCategory.slice(7).reduce((s, d) => s + d.amount, 0);
-      byCategory = [...top, { name: "Other", amount: other }];
-    }
-
-    const monthTotals = new Map<string, number>();
-    for (const t of external) {
-      if (t.direction !== "debit") continue;
-      const k = bkkMonthKey(t.ts);
-      monthTotals.set(k, (monthTotals.get(k) || 0) + (thbValue(t) ?? 0));
-    }
-    const monthly = [...monthTotals.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(-6)
-      .map(([k, amount]) => ({ month: monthLabel(k), amount }));
-
-    return { spend, income, reviewCount, byCategory, monthly };
-  }, [filtered, categories]);
-
-  // Per-card unpaid balance. When a statement anchor exists for a card, the true
-  // balance = that statement's closing balance + card movement AFTER the
-  // statement date (statement-sourced rows are all on/before it, so no double
-  // count). Without an anchor, fall back to all-time net (charges − payments).
+  // --- credit-card outstanding (anchored) ----------------------------------
   const { cards, cardTotal, anchored } = useMemo(() => {
-    // latest anchor per card (list is newest-first from the API)
     const latestAnchor = new Map<string, CardStatement>();
     for (const a of cardStatements) {
       const k = `${a.bank}|${a.card_masked}`;
       if (!latestAnchor.has(k)) latestAnchor.set(k, a);
     }
-
-    const map = new Map<
-      string,
-      { label: string; net: number; anchor?: CardStatement }
-    >();
+    const map = new Map<string, { label: string; net: number }>();
     for (const t of txns) {
       if (t.method !== "credit_card" || t.is_internal) continue;
       const v = thbValue(t);
-      if (v == null) continue; // foreign, not yet reconciled
+      if (v == null) continue;
       const masked = t.account_masked ?? "";
       const label = `${t.bank ?? "Card"}${masked ? " ••" + masked : ""}`;
       const anchor = latestAnchor.get(`${t.bank}|${masked}`);
-      const cur = map.get(label) ?? { label, net: 0, anchor };
+      const cur = map.get(label) ?? { label, net: 0 };
       if (anchor) {
-        // Only count movement strictly after the statement date.
-        const afterAnchor =
-          new Date(t.ts) > new Date(anchor.statement_date + "T23:59:59+07:00");
-        if (afterAnchor) cur.net += (t.direction === "debit" ? 1 : -1) * v;
+        if (new Date(t.ts) > new Date(anchor.statement_date + "T23:59:59+07:00")) {
+          cur.net += (t.direction === "debit" ? 1 : -1) * v;
+        }
       } else {
         cur.net += (t.direction === "debit" ? 1 : -1) * v;
       }
       map.set(label, cur);
     }
-    // Seed the anchor base for cards that have an anchor.
     let anyAnchor = false;
     for (const [k, a] of latestAnchor) {
       const [b, m] = k.split("|");
       const label = `${b}${m ? " ••" + m : ""}`;
       anyAnchor = true;
-      const cur = map.get(label) ?? { label, net: 0, anchor: a };
+      const cur = map.get(label) ?? { label, net: 0 };
       cur.net += Number(a.closing_balance);
-      cur.anchor = a;
       map.set(label, cur);
     }
-    const list = [...map.values()]
-      .map((c) => ({ label: c.label, net: c.net }))
-      .sort((a, b) => b.net - a.net);
-    return {
-      cards: list,
-      cardTotal: list.reduce((s, c) => s + c.net, 0),
-      anchored: anyAnchor,
-    };
+    const list = [...map.values()].sort((a, b) => b.net - a.net);
+    return { cards: list, cardTotal: list.reduce((s, c) => s + c.net, 0), anchored: anyAnchor };
   }, [txns, cardStatements]);
 
   return (
-    <div className="container">
-      <div className="topbar">
-        <h1>💸 Money Manager</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            className="btn"
-            onClick={() => setModal({ mode: "add" })}
-            style={{ background: "var(--series-1)", color: "#fff", borderColor: "var(--series-1)" }}
-          >
-            ＋ Add
-          </button>
+    <AppShell
+      active="home"
+      headerLeft={updatedAt ? <span className="synced">Synced at {updatedAt}</span> : null}
+      headerRight={
+        <>
+          <ThemeToggle />
           <button className="btn" onClick={load} disabled={loading}>
             {loading ? "Refreshing…" : "↻ Refresh"}
           </button>
-          <Link className="btn" href="/statements">
-            📄 Statements
-          </Link>
           <form method="post" action="/api/logout">
             <button className="btn" type="submit">
               Sign out
             </button>
           </form>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {modal ? (
         <TransactionModal
           accounts={accounts}
@@ -294,72 +354,108 @@ export function DashboardClient() {
         />
       ) : null}
 
-      {/* Filters — plain buttons, no navigation */}
-      <div className="filters">
-        {RANGES.map((r) => (
-          <button
-            key={r.key}
-            className="chip"
-            data-active={range === r.key}
-            onClick={() => setRange(r.key)}
-          >
-            {r.label}
-          </button>
-        ))}
-        <span style={{ width: 12 }} />
-        <button className="chip" data-active={bank === "all"} onClick={() => setBank("all")}>
-          All banks
-        </button>
-        {banks.map((b) => (
-          <button key={b} className="chip" data-active={bank === b} onClick={() => setBank(b)}>
-            {b}
-          </button>
-        ))}
-      </div>
-
       {error ? (
-        <div className="card" style={{ color: "var(--critical)" }}>
-          {error} — <button className="btn" onClick={load}>retry</button>
+        <div className="panel" style={{ color: "var(--negative)" }}>
+          {error} —{" "}
+          <button className="btn" onClick={load}>
+            retry
+          </button>
         </div>
       ) : loading && txns.length === 0 ? (
-        <div className="card" style={{ color: "var(--muted)" }}>Loading…</div>
+        <div className="panel" style={{ color: "var(--muted)" }}>
+          Loading…
+        </div>
       ) : (
-        <>
-          <div className="grid-tiles">
-            <StatTile label="Spending (cash/bank)" value={fmtBaht(metrics.spend)} />
-            <StatTile label="Income (cash/bank)" value={fmtBaht(metrics.income)} />
-            <StatTile label="Transactions" value={String(filtered.length)} />
-            <StatTile label="Needs review" value={String(metrics.reviewCount)} />
-          </div>
-
-          {cards.length > 0 ? (
-            <CreditCards total={cardTotal} cards={cards} anchored={anchored} />
-          ) : null}
-
-          <div className="grid-two">
-            <div className="card">
-              <h2 className="section-title">Spending by category</h2>
-              <CategoryBars data={metrics.byCategory} />
+        <div className="dash-grid">
+          <div className="col">
+            <div className="gi gi-expenses">
+              <ExpensesPanel
+                total={recap.expenseTotal}
+                changePct={recap.expenseChangePct}
+                periodLabel={recap.periodLabel}
+                breakdown={recap.breakdown}
+              />
             </div>
-            <div className="card">
-              <h2 className="section-title">Monthly spending</h2>
-              <MonthlyBars data={metrics.monthly} />
+
+            <div className="gi gi-filters">
+              <div className="filters">
+                {RANGES.map((r) => (
+                  <button
+                    key={r.key}
+                    className="chip"
+                    data-active={range === r.key}
+                    onClick={() => setRange(r.key)}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+                <span style={{ width: 8 }} />
+                <button
+                  className="chip"
+                  data-active={bank === "all"}
+                  onClick={() => setBank("all")}
+                >
+                  All banks
+                </button>
+                {banks.map((b) => (
+                  <button
+                    key={b}
+                    className="chip"
+                    data-active={bank === b}
+                    onClick={() => setBank(b)}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="gi gi-txns">
+              <RecentTransactions
+                rows={filtered}
+                categories={categories}
+                search={search}
+                onSearch={setSearch}
+                onEdit={(t) => setModal({ mode: "edit", txn: t })}
+                onDelete={del}
+              />
             </div>
           </div>
 
-          <div className="card">
-            <h2 className="section-title">
-              Transactions{filtered.length > 500 ? ` (showing 500 of ${filtered.length})` : ""}
-            </h2>
-            <TransactionsTable
-              rows={filtered.slice(0, 500)}
-              categories={categories}
-              onEdit={(t) => setModal({ mode: "edit", txn: t })}
-              onDelete={del}
-            />
+          <div className="col">
+            <div className="gi gi-income">
+              <IncomePanel
+                total={recap.incomeTotal}
+                changePct={recap.incomeChangePct}
+                periodLabel={recap.periodLabel}
+                barPct={recap.barPct}
+              />
+            </div>
+            <div className="gi gi-incbd">
+              <IncomeBreakdown sources={recap.sources} />
+            </div>
+            {cards.length > 0 ? (
+              <div className="gi gi-cards">
+                <CreditCards total={cardTotal} cards={cards} anchored={anchored} />
+              </div>
+            ) : null}
           </div>
-        </>
+        </div>
       )}
-    </div>
+
+      {/* Floating add button — sticky bottom-right, expands on hover. */}
+      <button
+        className="fab"
+        onClick={() => setModal({ mode: "add" })}
+        aria-label="Add transaction"
+      >
+        <span className="fab-plus" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </span>
+        <span className="fab-label">Add transaction</span>
+      </button>
+    </AppShell>
   );
 }

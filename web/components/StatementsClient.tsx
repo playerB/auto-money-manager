@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { fmtBaht } from "@/lib/format";
+import { AppShell } from "@/components/AppShell";
 
 type Anchor = {
   id: number;
@@ -90,14 +91,15 @@ export function StatementsClient() {
   }
 
   return (
-    <div className="container">
-      <div className="topbar">
-        <h1>📄 Statements</h1>
+    <AppShell
+      active="upload"
+      headerLeft={<span className="synced"><b>Upload</b></span>}
+      headerRight={
         <Link className="btn" href="/">
           ← Dashboard
         </Link>
-      </div>
-
+      }
+    >
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 className="section-title">Upload a statement PDF</h2>
         <div className="field">
@@ -215,6 +217,6 @@ export function StatementsClient() {
           </div>
         )}
       </div>
-    </div>
+    </AppShell>
   );
 }

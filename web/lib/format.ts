@@ -26,6 +26,32 @@ export function fmtDateTime(iso: string): string {
   }).format(d);
 }
 
+// Time only (24h, Bangkok) — for transaction rows.
+export function fmtTime(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
+}
+
+// Date-group header, e.g. "April 12, 2025" (Bangkok).
+export function fmtDateHeader(iso: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(iso));
+}
+
+// YYYY-MM-DD key in Bangkok time, for grouping transactions by day.
+export function bkkDayKey(iso: string): string {
+  const d = new Date(new Date(iso).getTime() + 7 * 3600 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
 export function monthKey(iso: string): string {
   const d = new Date(iso);
   return new Intl.DateTimeFormat("en-GB", {
