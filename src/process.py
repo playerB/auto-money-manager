@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from . import categorize, config, db
+from . import categorize, config, db, owner
 from .dedup import build_dedup_key
 from .parsers import dispatch, kbank, scb, uob
 
@@ -195,6 +195,14 @@ def run() -> dict[str, int]:
             db.mark_event_processed(sb, event_id, error=err)
             log.info("event %s: %s", event_id, err)
             continue
+
+        # Normalize the owner account to its canonical last-4 (a KBANK alert
+        # reveals ...3341, but the account's real last-4 is 3416) so every row
+        # for one account shares a single masked number.
+        if getattr(txn, "account_masked", None) and accounts:
+            canon = owner.canonical_account_masked(txn.bank, txn.account_masked, accounts)
+            if canon:
+                txn.account_masked = canon
 
         dedup_key = build_dedup_key(txn)
 

@@ -156,6 +156,38 @@ def own_account_match(bank, digits, accounts) -> bool:
     return False
 
 
+def canonical_account_masked(bank, digits, accounts) -> str | None:
+    """Map a revealed masking WINDOW to the owner account's canonical last-4.
+
+    Different sources reveal different windows of the SAME account: a KBANK app
+    alert shows ...3341, but the account's real last-4 (from the full number
+    0578033416) is 3416. Given the revealed digits and the transaction's bank,
+    return the matching own account's `masked_number` so every row for one
+    account shares a single last-4. Scoped by bank (the alert's bank is always
+    known); returns None when no same-bank own account contains the digits."""
+    if not digits or not accounts:
+        return None
+    d = re.sub(r"\D", "", str(digits))
+    if not d:
+        return None
+    b = str(bank or "").upper()
+    for a in accounts:
+        if a.get("is_own") is False:
+            continue
+        abank = str(a.get("bank_name") or "").upper()
+        if b and abank and abank != b:
+            continue
+        masked = re.sub(r"\D", "", str(a.get("masked_number") or ""))
+        full = re.sub(r"\D", "", str(a.get("full_number") or ""))
+        if not masked:
+            continue
+        if d == masked:
+            return masked
+        if full and d in full:
+            return masked
+    return None
+
+
 def classify_internal(
     matcher: OwnerMatcher,
     accounts,

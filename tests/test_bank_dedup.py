@@ -74,3 +74,29 @@ def test_load_bank_transactions_matches_alert_in_other_window():
     got = load_bank_transactions(sb, "KBANK", "3416", lo, hi, account_digits="0578033416")
     ids = {r["id"] for r in got}
     assert ids == {1}
+
+
+# --- canonical account normalization (3341 window -> 3416 real last-4) -------
+
+from src.owner import canonical_account_masked
+
+_ACCTS = [
+    {"bank_name": "KBANK", "masked_number": "3416", "full_number": "0578033416", "is_own": True},
+    {"bank_name": "SCB", "masked_number": "6442", "full_number": "0384676442", "is_own": True},
+]
+
+
+def test_canonical_maps_window_to_real_last4():
+    # KBANK alert reveals the ...3341 window -> normalize to canonical 3416.
+    assert canonical_account_masked("KBANK", "3341", _ACCTS) == "3416"
+    assert canonical_account_masked("KBANK", "3416", _ACCTS) == "3416"
+
+
+def test_canonical_is_bank_scoped():
+    # 3341 sits inside the KBANK full number, but for an SCB txn it must not map.
+    assert canonical_account_masked("SCB", "3341", _ACCTS) is None
+
+
+def test_canonical_none_for_unknown_account():
+    assert canonical_account_masked("KBANK", "9999", _ACCTS) is None
+    assert canonical_account_masked("KBANK", "", _ACCTS) is None
