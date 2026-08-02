@@ -28,7 +28,8 @@ LOCAL_TZ = os.environ.get("LOCAL_TZ", "Asia/Bangkok")
 DEDUP_WINDOW_MINUTES = int(os.environ.get("DEDUP_WINDOW_MINUTES", "10"))
 
 # Supabase Storage bucket where the phone uploads transfer-slip images.
-SLIP_BUCKET = os.environ.get("SLIP_BUCKET", "slips")
+# `or` (not a default arg) so an env var set to "" in CI falls back, not blanks.
+SLIP_BUCKET = os.environ.get("SLIP_BUCKET") or "slips"
 
 # Slip reading provider: "easyslip" (QR-verification API) or "ocr" (Tesseract).
 # EasySlip returns exact structured data; OCR is the free/local fallback.
@@ -36,7 +37,9 @@ SLIP_PROVIDER = os.environ.get("SLIP_PROVIDER", "ocr").strip().lower()
 EASYSLIP_API_KEY = os.environ.get("EASYSLIP_API_KEY", "")
 
 # Supabase Storage bucket where statement PDFs are uploaded (via the dashboard).
-STATEMENT_BUCKET = os.environ.get("STATEMENT_BUCKET", "statements")
+# `or` so an unset repo secret (which CI injects as "") falls back to the default
+# bucket name instead of an empty string (which 404s as "Bucket not found").
+STATEMENT_BUCKET = os.environ.get("STATEMENT_BUCKET") or "statements"
 
 # Statement PDF passwords (Thai e-statements are often encrypted). KBANK and UOB
 # may differ; leave blank if a bank's PDFs open freely.
