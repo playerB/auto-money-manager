@@ -11,6 +11,11 @@ export function getServiceClient(): SupabaseClient {
   if (!url || !key) {
     throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_KEY env vars");
   }
-  _client = createClient(url, key, { auth: { persistSession: false } });
+  _client = createClient(url, key, {
+    auth: { persistSession: false },
+    global: {
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+    },
+  });
   return _client;
 }

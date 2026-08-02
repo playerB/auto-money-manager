@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 // Fresh data on every call (initial load + Refresh). Protected by middleware —
 // the browser sends the session cookie automatically (same-origin).
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function GET() {
   const sb = getServiceClient();
