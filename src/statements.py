@@ -355,7 +355,10 @@ def process_kbank_statement_text(
     hi = datetime.combine(max(dates), datetime.min.time(), tzinfo=timezone.utc) + timedelta(
         days=STATEMENT_MATCH_DAYS + 2
     )
-    live = db.load_bank_transactions(sb, "KBANK", st.account_masked or "", lo, hi)
+    live = db.load_bank_transactions(
+        sb, "KBANK", st.account_masked or "", lo, hi,
+        account_digits=st.account_digits or "",
+    )
     consumed: set[int] = set()
     stmt_key = str(st.period_end or st.period_start or "")
 

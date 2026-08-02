@@ -1,6 +1,7 @@
 """Thin Supabase data-access helpers used by the processing job."""
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -144,29 +145,67 @@ def load_cc_transactions(
     return [r for r in rows if not str(r.get("source") or "").startswith("statement-")]
 
 
+def account_window_match(row_masked: str, account_masked: str, account_digits: str) -> bool:
+    """True when a live row belongs to the SAME real account as a statement.
+
+    Different sources mask different WINDOWS of the same account number: a KBANK
+    app alert shows ...3341 while the statement header prints the full
+    057-8-03341-6 (last-4 ...3416) — both 3341 and 3416 sit inside 0578033416. So
+    equality of the masked last-4 is the wrong test; we accept a live row when its
+    masked digits are a window of the statement's full account digits (or equal
+    the statement's own last-4). A live row that captured no account number is
+    also accepted, to be matched on amount+time downstream (a KBANK alert without
+    a parsed account should still dedup against its statement line)."""
+    full = re.sub(r"\D", "", account_digits or "")
+    want = re.sub(r"\D", "", account_masked or "")
+    m = re.sub(r"\D", "", str(row_masked or ""))
+    if not full and not want:
+        return True
+    if not m:
+        return True
+    if want and m == want:
+        return True
+    if full and (m in full or full in m):
+        return True
+    return False
+
+
 def load_bank_transactions(
     sb: Client,
     bank: str,
     account_masked: str,
     lo: datetime,
     hi: datetime,
+    account_digits: str = "",
 ) -> list[dict[str, Any]]:
     """Existing bank transactions for one account in a date range, to reconcile
     a bank statement against already-captured notifications/slips. Excludes rows
-    already sourced from a statement."""
-    q = (
+    already sourced from a statement.
+
+    Account matching is window-aware (see account_window_match): a statement whose
+    header shows ...3416 still reconciles against alerts stored as ...3341, since
+    both are windows of the same full account number. This is what stops a PDF
+    import from creating duplicate rows for transactions the app already captured
+    from KBANK notifications."""
+    resp = (
         sb.table("transactions")
         .select("*")
         .eq("method", "bank")
         .eq("bank", bank)
         .gte("ts", lo.isoformat())
         .lte("ts", hi.isoformat())
+        .execute()
     )
-    if account_masked:
-        q = q.eq("account_masked", account_masked)
-    resp = q.execute()
-    rows = resp.data or []
-    return [r for r in rows if not str(r.get("source") or "").startswith("statement-")]
+    rows = [
+        r for r in (resp.data or [])
+        if not str(r.get("source") or "").startswith("statement-")
+    ]
+    if not account_masked and not account_digits:
+        return rows
+    return [
+        r for r in rows
+        if account_window_match(r.get("account_masked"), account_masked, account_digits)
+    ]
 
 
 def upsert_card_statement(sb: Client, row: dict[str, Any]) -> None:
